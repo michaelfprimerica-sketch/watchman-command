@@ -93,7 +93,7 @@ export default function ChatInterface({
               <IconWand className="h-16 w-16 text-desert-green mx-auto mb-4 opacity-50" />
               <h3 className="text-lg font-medium text-text-primary mb-2">Start a conversation</h3>
               <p className="text-text-muted text-sm">
-                Interact with your installed language models directly in the Command Center.
+                Interact with your installed language models directly in Watchman Command.
               </p>
               {chatSuggestionsEnabled && chatSuggestions && chatSuggestions.length > 0 && !chatSuggestionsLoading && (
                 <div className="mt-8">

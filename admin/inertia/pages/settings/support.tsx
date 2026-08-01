@@ -5,12 +5,12 @@ import SettingsLayout from '~/layouts/SettingsLayout'
 export default function SupportPage() {
   return (
     <SettingsLayout>
-      <Head title="Support the Project | Project N.O.M.A.D." />
+      <Head title="Support Watchman Command" />
       <div className="xl:pl-72 w-full">
         <main className="px-12 py-6 max-w-4xl">
-          <h1 className="text-4xl font-semibold mb-4">Support the Project</h1>
+          <h1 className="text-4xl font-semibold mb-4">Support Watchman Command</h1>
           <p className="text-text-muted mb-10 text-lg">
-            Project NOMAD is 100% free and open source — no subscriptions, no paywalls, no catch.
+            Watchman Command is built on the open-source Project N.O.M.A.D. foundation and is 100% free and open source — no subscriptions, no paywalls, no catch.
             If you'd like to help keep the project going, here are a few ways to show your support.
           </p>
 
@@ -18,7 +18,7 @@ export default function SupportPage() {
           <section className="mb-12">
             <h2 className="text-2xl font-semibold mb-3">Buy Us a Coffee</h2>
             <p className="text-text-muted mb-4">
-              Every contribution helps fund development, server costs, and new content packs for NOMAD.
+              Every contribution helps fund development, server costs, and new content packs for Watchman Command.
               Even a small donation goes a long way.
             </p>
             <a
@@ -75,7 +75,7 @@ export default function SupportPage() {
                 >
                   Star the project on GitHub
                 </a>
-                {' '}— it helps more people discover NOMAD
+                {' '}— it helps more people discover Watchman Command
               </li>
               <li>
                 <a
@@ -86,9 +86,9 @@ export default function SupportPage() {
                 >
                   Report bugs and suggest features
                 </a>
-                {' '}— every report makes NOMAD better
+                {' '}— every report makes Watchman Command better
               </li>
-              <li>Share NOMAD with someone who'd use it — word of mouth is the best marketing</li>
+              <li>Share Watchman Command with someone who'd use it — word of mouth is the best marketing</li>
               <li>
                 <a
                   href="https://discord.com/invite/crosstalksolutions"
