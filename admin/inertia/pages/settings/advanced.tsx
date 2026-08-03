@@ -68,7 +68,7 @@ export default function AdvancedPage(props: {
 
   return (
     <SettingsLayout>
-      <Head title="Advanced Settings | Project N.O.M.A.D." />
+      <Head title="Advanced Settings" />
       <div className="xl:pl-72 w-full">
         <main className="px-12 py-6">
           <h1 className="text-4xl font-semibold mb-4">Advanced</h1>

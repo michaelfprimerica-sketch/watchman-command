@@ -11,11 +11,13 @@ export default function Footer() {
 
   return (
     <footer>
-      <div className="flex items-center justify-center gap-3 border-t border-border-subtle py-4">
+      <div className="flex flex-col items-center justify-center gap-2 border-t border-border-subtle px-4 py-4 text-center sm:flex-row sm:flex-wrap sm:gap-3">
         <p className="text-sm/6 text-text-secondary">
-          Project N.O.M.A.D. Command Center v{appVersion}
+          Watchman Command v{appVersion} · Live Prepared. Stay Protected.
         </p>
-        <span className="text-gray-300">|</span>
+        <span aria-hidden="true" className="hidden text-gray-300 sm:inline">
+          |
+        </span>
         <button
           onClick={() => setDebugModalOpen(true)}
           className="text-sm/6 text-gray-500 hover:text-desert-green flex items-center gap-1 cursor-pointer"
