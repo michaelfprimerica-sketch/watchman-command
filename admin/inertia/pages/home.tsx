@@ -35,7 +35,7 @@ const SYSTEM_ITEMS = [
     to: '/easy-setup',
     target: '',
     description:
-      'Not sure where to start? Use the setup wizard to quickly configure your N.O.M.A.D.!',
+      'Not sure where to start? Use the setup wizard to quickly configure Watchman Command!',
     icon: <IconBolt size={48} />,
     installed: true,
     displayOrder: 50,
@@ -55,7 +55,7 @@ const SYSTEM_ITEMS = [
     label: 'Docs',
     to: '/docs/home',
     target: '',
-    description: 'Read Project N.O.M.A.D. manuals and guides',
+    description: 'Read Watchman Command manuals and guides',
     icon: <IconHelp size={48} />,
     installed: true,
     displayOrder: 52,
@@ -65,7 +65,7 @@ const SYSTEM_ITEMS = [
     label: 'Settings',
     to: '/settings/system',
     target: '',
-    description: 'Configure your N.O.M.A.D. settings',
+    description: 'Configure your Watchman Command settings',
     icon: <IconSettings size={48} />,
     installed: true,
     displayOrder: 53,
@@ -136,12 +136,12 @@ export default function Home(props: {
 
   return (
     <AppLayout>
-      <Head title="Command Center" />
+      <Head title="Home" />
       {
         updateInfo?.updateAvailable && (
           <div className='flex justify-center items-center p-4 w-full'>
             <Alert
-              title="An update is available for Project N.O.M.A.D.!"
+              title="An update is available for Watchman Command!"
               type="info-inverted"
               variant="solid"
               className="w-full"

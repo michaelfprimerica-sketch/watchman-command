@@ -4,7 +4,7 @@ import SettingsLayout from '~/layouts/SettingsLayout'
 export default function LegalPage() {
   return (
     <SettingsLayout>
-      <Head title="Legal Notices | Project N.O.M.A.D." />
+      <Head title="Legal Notices" />
       <div className="xl:pl-72 w-full">
         <main className="px-12 py-6 max-w-4xl">
           <h1 className="text-4xl font-semibold mb-8">Legal Notices</h1>
