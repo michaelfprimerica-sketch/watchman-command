@@ -121,6 +121,15 @@ export async function doResumableDownload({
     appendMode = false
   }
 
+  // A publisher may replace a file in place. A larger partial cannot be a
+  // prefix of the newly advertised object and would otherwise cause a 416 on
+  // every retry, so discard only that stale staging file and restart cleanly.
+  if (startByte > totalBytes && totalBytes > 0) {
+    await deleteFileIfExists(tempPath)
+    startByte = 0
+    appendMode = false
+  }
+
   const headers: Record<string, string> = {}
   if (supportsRangeRequests && startByte > 0) {
     headers.Range = `bytes=${startByte}-`
