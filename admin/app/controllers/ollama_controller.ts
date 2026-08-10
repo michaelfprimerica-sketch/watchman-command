@@ -12,6 +12,8 @@ import type { HttpContext } from '@adonisjs/core/http'
 import { RAG_CONTEXT_LIMITS, SYSTEM_PROMPTS } from '../../constants/ollama.js'
 import { SERVICE_NAMES } from '../../constants/service_names.js'
 import logger from '@adonisjs/core/services/logger'
+import { abortOnClientClose } from '../utils/request_abort.js'
+import { InstructionPolicyService } from '#services/instruction_policy_service'
 type Message = { role: 'system' | 'user' | 'assistant'; content: string }
 
 @inject()
@@ -20,8 +22,9 @@ export default class OllamaController {
     private chatService: ChatService,
     private dockerService: DockerService,
     private ollamaService: OllamaService,
-    private ragService: RagService
-  ) { }
+    private ragService: RagService,
+    private instructionPolicyService: InstructionPolicyService
+  ) {}
 
   async availableModels({ request }: HttpContext) {
     const reqData = await request.validateUsing(getAvailableModelsSchema)
@@ -60,16 +63,14 @@ export default class OllamaController {
     }
 
     try {
-      // If there are no system messages in the chat inject system prompts
-      const hasSystemMessage = reqData.messages.some((msg) => msg.role === 'system')
-      if (!hasSystemMessage) {
-        const systemPrompt = {
-          role: 'system' as const,
-          content: SYSTEM_PROMPTS.default,
-        }
-        logger.debug('[OllamaController] Injecting system prompt')
-        reqData.messages.unshift(systemPrompt)
-      }
+      // API-supplied system messages are user preferences, not vendor policy.
+      // Remove their privileged role and re-inject them later at layer 4.
+      const userPreferences = reqData.messages
+        .filter((message) => message.role === 'system')
+        .map((message) => message.content)
+        .join('\n\n')
+      reqData.messages = reqData.messages.filter((message) => message.role !== 'system')
+      let ragContext: string | null = null
 
       // Query rewriting for better RAG retrieval with manageable context
       // Will return user's latest message if no rewriting is needed
@@ -80,10 +81,13 @@ export default class OllamaController {
         const relevantDocs = await this.ragService.searchSimilarDocuments(
           rewrittenQuery,
           5, // Top 5 most relevant chunks
-          0.3 // Minimum similarity score of 0.3
+          0.3, // Minimum similarity score of 0.3
+          reqData.collection
         )
 
-        logger.debug(`[RAG] Retrieved ${relevantDocs.length} relevant documents for query: "${rewrittenQuery}"`)
+        logger.debug(
+          `[RAG] Retrieved ${relevantDocs.length} relevant documents for query: "${rewrittenQuery}"`
+        )
 
         // If relevant context is found, inject as a system message with adaptive limits
         if (relevantDocs.length > 0) {
@@ -119,17 +123,17 @@ export default class OllamaController {
             })
             .join('\n\n')
 
-          const systemMessage = {
-            role: 'system' as const,
-            content: SYSTEM_PROMPTS.rag_context(contextText),
-          }
-
-          // Insert system message at the beginning (after any existing system messages)
-          const firstNonSystemIndex = reqData.messages.findIndex((msg) => msg.role !== 'system')
-          const insertIndex = firstNonSystemIndex === -1 ? 0 : firstNonSystemIndex
-          reqData.messages.splice(insertIndex, 0, systemMessage)
+          ragContext = contextText
         }
       }
+
+      const policyMessages = await this.instructionPolicyService.compose({
+        // Mission context intentionally remains absent until Watchman has a
+        // real Mission authorization/data boundary.
+        userPreferences,
+        ragContext,
+      })
+      reqData.messages.unshift(...policyMessages)
 
       // If system messages are large (e.g. due to RAG context), request a context window big
       // enough to fit them. Ollama respects num_ctx per-request; LM Studio ignores it gracefully.
@@ -141,16 +145,26 @@ export default class OllamaController {
       if (estimatedSystemTokens > 3000) {
         const needed = estimatedSystemTokens + 2048 // leave room for conversation + response
         numCtx = [8192, 16384, 32768, 65536].find((n) => n >= needed) ?? 65536
-        logger.debug(`[OllamaController] Large system prompt (~${estimatedSystemTokens} tokens), requesting num_ctx: ${numCtx}`)
+        logger.debug(
+          `[OllamaController] Large system prompt (~${estimatedSystemTokens} tokens), requesting num_ctx: ${numCtx}`
+        )
       }
 
-      // Check if the model supports "thinking" capability for enhanced response generation
-      // If gpt-oss model, it requires a text param for "think" https://docs.ollama.com/api/chat
+      // Reasoning generation is globally OFF unless an operator explicitly enables
+      // ai.autoThinking. Capability is still checked so unsupported backends never
+      // receive reasoning parameters. Raw reasoning is never returned to the UI.
       const thinkingCapability = await this.ollamaService.checkModelHasThinking(reqData.model)
-      const think: boolean | 'medium' = thinkingCapability ? (reqData.model.startsWith('gpt-oss') ? 'medium' : true) : false
+      const autoThinkingSetting = await KVStore.getValue('ai.autoThinking')
+      const thinkingEnabled = thinkingCapability && autoThinkingSetting === true
+      const think: boolean | 'medium' = thinkingEnabled
+        ? reqData.model.startsWith('gpt-oss')
+          ? 'medium'
+          : true
+        : false
 
-      // Separate sessionId from the Ollama request payload — Ollama rejects unknown fields
-      const { sessionId, ...ollamaRequest } = reqData
+      // UI-only routing fields must never be forwarded to the model provider.
+      const { sessionId, collection: collectionRoutingField, ...ollamaRequest } = reqData
+      void collectionRoutingField
 
       // Save user message to DB before streaming if sessionId provided
       let userContent: string | null = null
@@ -163,15 +177,31 @@ export default class OllamaController {
       }
 
       if (reqData.stream) {
-        logger.debug(`[OllamaController] Initiating streaming response for model: "${reqData.model}" with think: ${think}`)
-        // Headers already flushed above
-        const stream = await this.ollamaService.chatStream({ ...ollamaRequest, think, numCtx })
+        logger.debug(
+          `[OllamaController] Initiating streaming response for model: "${reqData.model}" with think: ${think}`
+        )
+        const clientLifetime = abortOnClientClose(response.response)
         let fullContent = ''
-        for await (const chunk of stream) {
-          if (chunk.message?.content) {
-            fullContent += chunk.message.content
+        try {
+          const stream = await this.ollamaService.chatStream({
+            ...ollamaRequest,
+            think,
+            thinkingCapable: thinkingCapability,
+            numCtx,
+            signal: clientLifetime.signal,
+          })
+          for await (const chunk of stream) {
+            if (chunk.message?.content) fullContent += chunk.message.content
+            response.response.write(`data: ${JSON.stringify(chunk)}\n\n`)
           }
-          response.response.write(`data: ${JSON.stringify(chunk)}\n\n`)
+        } catch (error) {
+          if (clientLifetime.signal.aborted) {
+            logger.debug('[OllamaController] Client disconnected; upstream generation aborted')
+            return
+          }
+          throw error
+        } finally {
+          clientLifetime.dispose()
         }
         response.response.end()
 
@@ -180,24 +210,37 @@ export default class OllamaController {
           await this.chatService.addMessage(sessionId, 'assistant', fullContent)
           const messageCount = await this.chatService.getMessageCount(sessionId)
           if (messageCount <= 2 && userContent) {
-            this.chatService.generateTitle(sessionId, userContent, fullContent, reqData.model).catch((err) => {
-              logger.error(`[OllamaController] Title generation failed: ${err instanceof Error ? err.message : err}`)
-            })
+            this.chatService
+              .generateTitle(sessionId, userContent, fullContent, reqData.model)
+              .catch((err) => {
+                logger.error(
+                  `[OllamaController] Title generation failed: ${err instanceof Error ? err.message : err}`
+                )
+              })
           }
         }
         return
       }
 
       // Non-streaming (legacy) path
-      const result = await this.ollamaService.chat({ ...ollamaRequest, think, numCtx })
+      const result = await this.ollamaService.chat({
+        ...ollamaRequest,
+        think,
+        thinkingCapable: thinkingCapability,
+        numCtx,
+      })
 
       if (sessionId && result?.message?.content) {
         await this.chatService.addMessage(sessionId, 'assistant', result.message.content)
         const messageCount = await this.chatService.getMessageCount(sessionId)
         if (messageCount <= 2 && userContent) {
-          this.chatService.generateTitle(sessionId, userContent, result.message.content, reqData.model).catch((err) => {
-            logger.error(`[OllamaController] Title generation failed: ${err instanceof Error ? err.message : err}`)
-          })
+          this.chatService
+            .generateTitle(sessionId, userContent, result.message.content, reqData.model)
+            .catch((err) => {
+              logger.error(
+                `[OllamaController] Title generation failed: ${err instanceof Error ? err.message : err}`
+              )
+            })
         }
       }
 
@@ -232,7 +275,9 @@ export default class OllamaController {
 
     const ollamaService = await Service.query().where('service_name', SERVICE_NAMES.OLLAMA).first()
     if (!ollamaService) {
-      return response.status(404).send({ success: false, message: 'Ollama service record not found.' })
+      return response
+        .status(404)
+        .send({ success: false, message: 'Ollama service record not found.' })
     }
 
     // Clear path: null or empty URL removes remote config. If a local nomad_ollama container
@@ -309,9 +354,7 @@ export default class OllamaController {
   private async _stopLocalOllamaContainer(): Promise<void> {
     try {
       const containers = await this.dockerService.docker.listContainers({ all: true })
-      const ollamaContainer = containers.find((c) =>
-        c.Names.includes(`/${SERVICE_NAMES.OLLAMA}`)
-      )
+      const ollamaContainer = containers.find((c) => c.Names.includes(`/${SERVICE_NAMES.OLLAMA}`))
       if (!ollamaContainer || ollamaContainer.State !== 'running') {
         return
       }
@@ -329,9 +372,7 @@ export default class OllamaController {
   private async _startLocalOllamaContainerIfExists(): Promise<boolean> {
     try {
       const containers = await this.dockerService.docker.listContainers({ all: true })
-      const ollamaContainer = containers.find((c) =>
-        c.Names.includes(`/${SERVICE_NAMES.OLLAMA}`)
-      )
+      const ollamaContainer = containers.find((c) => c.Names.includes(`/${SERVICE_NAMES.OLLAMA}`))
       if (!ollamaContainer) {
         return false
       }
@@ -368,8 +409,12 @@ export default class OllamaController {
     }
   }
 
-  async installedModels({ }: HttpContext) {
-    return await this.ollamaService.getModels()
+  async installedModels({}: HttpContext) {
+    const models = await this.ollamaService.getModels()
+    const capabilities = await Promise.all(
+      models.map((model) => this.ollamaService.checkModelHasThinking(model.name))
+    )
+    return models.map((model, index) => ({ ...model, thinking: capabilities[index] }))
   }
 
   /**
@@ -395,7 +440,7 @@ export default class OllamaController {
     messages: Message[],
     model: string
   ): Promise<string | null> {
-    const lastUserMessage = [...messages].reverse().find(msg => msg.role === 'user')
+    const lastUserMessage = [...messages].reverse().find((msg) => msg.role === 'user')
 
     try {
       // Skip the entire RAG pipeline if there are no documents to search
@@ -414,18 +459,19 @@ export default class OllamaController {
       // entities and topics from earlier turns ("the bars" → "Hershey's bars
       // chocolate poisoning dog"); without it, embeddings match nothing and
       // the assistant loses the thread.
-      const userMessages = recentMessages.filter(msg => msg.role === 'user')
+      const userMessages = recentMessages.filter((msg) => msg.role === 'user')
       if (userMessages.length < 2) {
         return lastUserMessage?.content || null
       }
 
       const conversationContext = recentMessages
-        .map(msg => {
+        .map((msg) => {
           const role = msg.role === 'user' ? 'User' : 'Assistant'
           // Truncate assistant messages to first 200 chars to keep context manageable
-          const content = msg.role === 'assistant'
-            ? msg.content.slice(0, 200) + (msg.content.length > 200 ? '...' : '')
-            : msg.content
+          const content =
+            msg.role === 'assistant'
+              ? msg.content.slice(0, 200) + (msg.content.length > 200 ? '...' : '')
+              : msg.content
           return `${role}: "${content}"`
         })
         .join('\n')

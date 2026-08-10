@@ -1,4 +1,5 @@
 import vine from '@vinejs/vine'
+import { KNOWLEDGE_COLLECTION_MAX_INPUT_LENGTH } from '../utils/knowledge_collection.js'
 
 export const chatSchema = vine.compile(
   vine.object({
@@ -11,6 +12,7 @@ export const chatSchema = vine.compile(
     ),
     stream: vine.boolean().optional(),
     sessionId: vine.number().positive().optional(),
+    collection: vine.string().maxLength(KNOWLEDGE_COLLECTION_MAX_INPUT_LENGTH).optional(),
   })
 )
 

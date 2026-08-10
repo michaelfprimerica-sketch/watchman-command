@@ -491,7 +491,7 @@ verify_gpu_setup() {
         amd_gfx_version='gfx1034'
       elif echo "${amd_devices}" | grep -iq 'Rembrandt'; then
         amd_gfx_version='gfx1035'
-      elif echo "${amd_devices}" | grep -iEq 'Phoenix1?|Phoenix2'; then
+      elif echo "${amd_devices}" | grep -iEq 'Phoenix[0-9]?|Hawk Point|Radeon (780M|760M)'; then
         amd_gfx_version='gfx1103'
       elif echo "${amd_devices}" | grep -iEq 'Strix Halo'; then
         amd_gfx_version='gfx1151'

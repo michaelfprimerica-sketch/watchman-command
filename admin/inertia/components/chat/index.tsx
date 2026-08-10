@@ -33,6 +33,7 @@ export default function Chat({
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [selectedModel, setSelectedModel] = useState<string>('')
+  const [selectedCollection, setSelectedCollection] = useState<string>('')
   const [pendingModelSwitch, setPendingModelSwitch] = useState<string | null>(null)
   const pageLoadNormalizedRef = useRef(false)
   const [isStreamingResponse, setIsStreamingResponse] = useState(false)
@@ -72,6 +73,19 @@ export default function Chat({
     select: (data) => data || [],
   })
 
+  const { data: knowledgeCollections = [] } = useQuery({
+    queryKey: ['knowledgeCollections'],
+    queryFn: () => api.getKnowledgeCollections(),
+    enabled,
+    select: (data) => data || [],
+  })
+
+  useEffect(() => {
+    if (selectedCollection && !knowledgeCollections.includes(selectedCollection)) {
+      setSelectedCollection('')
+    }
+  }, [knowledgeCollections, selectedCollection])
+
   const { data: chatSuggestions, isLoading: chatSuggestionsLoading } = useQuery<string[]>({
     queryKey: ['chatSuggestions'],
     queryFn: async ({ signal }) => {
@@ -84,7 +98,7 @@ export default function Chat({
   })
 
   const rewriteModelAvailable = useMemo(() => {
-    return installedModels.some(model => model.name === DEFAULT_QUERY_REWRITE_MODEL)
+    return installedModels.some((model) => model.name === DEFAULT_QUERY_REWRITE_MODEL)
   }, [installedModels])
 
   const deleteAllSessionsMutation = useMutation({
@@ -102,6 +116,7 @@ export default function Chat({
       model: string
       messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
       sessionId?: number
+      collection?: string
     }) => api.sendChatMessage({ ...request, stream: false }),
     onSuccess: async (data) => {
       if (!data || !activeSessionId) {
@@ -316,18 +331,22 @@ export default function Chat({
         const assistantMsgId = `msg-${Date.now()}-assistant`
         let isFirstChunk = true
         let fullContent = ''
-        let thinkingContent = ''
-        let isThinkingPhase = true
-        let thinkingStartTime: number | null = null
-        let thinkingDuration: number | null = null
 
         try {
           await api.streamChatMessage(
-            { model: selectedModel || 'llama3.2', messages: chatMessages, stream: true, sessionId: sessionId ? Number(sessionId) : undefined },
-            (chunkContent, chunkThinking, done) => {
-              if (chunkThinking.length > 0 && thinkingStartTime === null) {
-                thinkingStartTime = Date.now()
-              }
+            {
+              model: selectedModel || 'llama3.2',
+              messages: chatMessages,
+              stream: true,
+              sessionId: sessionId ? Number(sessionId) : undefined,
+              collection: selectedCollection || undefined,
+            },
+            (chunkContent, reasoningActive, done) => {
+              const reasoningStatus = reasoningActive
+                ? selectedCollection
+                  ? 'Searching local knowledge…'
+                  : 'Analyzing…'
+                : undefined
               if (isFirstChunk) {
                 isFirstChunk = false
                 setIsStreamingResponse(false)
@@ -337,37 +356,26 @@ export default function Chat({
                     id: assistantMsgId,
                     role: 'assistant',
                     content: chunkContent,
-                    thinking: chunkThinking,
                     timestamp: new Date(),
                     isStreaming: true,
-                    isThinking: chunkThinking.length > 0 && chunkContent.length === 0,
-                    thinkingDuration: undefined,
+                    reasoningStatus: chunkContent.length > 0 ? undefined : reasoningStatus,
                   },
                 ])
               } else {
-                if (isThinkingPhase && chunkContent.length > 0) {
-                  isThinkingPhase = false
-                  if (thinkingStartTime !== null) {
-                    thinkingDuration = Math.max(1, Math.round((Date.now() - thinkingStartTime) / 1000))
-                  }
-                }
                 setMessages((prev) =>
                   prev.map((m) =>
                     m.id === assistantMsgId
                       ? {
-                        ...m,
-                        content: m.content + chunkContent,
-                        thinking: (m.thinking ?? '') + chunkThinking,
-                        isStreaming: !done,
-                        isThinking: isThinkingPhase,
-                        thinkingDuration: thinkingDuration ?? undefined,
-                      }
+                          ...m,
+                          content: m.content + chunkContent,
+                          isStreaming: !done,
+                          reasoningStatus: chunkContent.length > 0 ? undefined : reasoningStatus,
+                        }
                       : m
                   )
                 )
               }
               fullContent += chunkContent
-              thinkingContent += chunkThinking
             },
             abortController.signal
           )
@@ -376,9 +384,7 @@ export default function Chat({
             setMessages((prev) => {
               const hasAssistantMsg = prev.some((m) => m.id === assistantMsgId)
               if (hasAssistantMsg) {
-                return prev.map((m) =>
-                  m.id === assistantMsgId ? { ...m, isStreaming: false } : m
-                )
+                return prev.map((m) => (m.id === assistantMsgId ? { ...m, isStreaming: false } : m))
               }
               return [
                 ...prev,
@@ -399,9 +405,7 @@ export default function Chat({
         if (fullContent && sessionId) {
           // Ensure the streaming cursor is removed
           setMessages((prev) =>
-            prev.map((m) =>
-              m.id === assistantMsgId ? { ...m, isStreaming: false } : m
-            )
+            prev.map((m) => (m.id === assistantMsgId ? { ...m, isStreaming: false } : m))
           )
 
           // Refresh sessions to pick up backend-persisted messages and title
@@ -414,111 +418,140 @@ export default function Chat({
           model: selectedModel || 'llama3.2',
           messages: chatMessages,
           sessionId: sessionId ? Number(sessionId) : undefined,
+          collection: selectedCollection || undefined,
         })
       }
     },
-    [activeSessionId, messages, selectedModel, chatMutation, queryClient, streamingEnabled]
+    [
+      activeSessionId,
+      messages,
+      selectedModel,
+      selectedCollection,
+      chatMutation,
+      queryClient,
+      streamingEnabled,
+    ]
   )
 
   return (
     <>
-    {pendingModelSwitch && (
-      <StyledModal
-        title={`Switch to ${pendingModelSwitch}?`}
-        onConfirm={handleConfirmModelSwitch}
-        onCancel={handleCancelModelSwitch}
-        open={true}
-        confirmText="Switch & New Chat"
-        cancelText="Cancel"
-        confirmVariant="primary"
-      >
-        <p className="text-text-primary">
-          Switching to <strong>{pendingModelSwitch}</strong> will start a new chat. Your current
-          conversation stays available in the sidebar.
-        </p>
-      </StyledModal>
-    )}
-    <div
-      className={classNames(
-        'flex border border-border-subtle overflow-hidden shadow-sm w-full',
-        isInModal ? 'h-full rounded-lg' : 'h-screen'
+      {pendingModelSwitch && (
+        <StyledModal
+          title={`Switch to ${pendingModelSwitch}?`}
+          onConfirm={handleConfirmModelSwitch}
+          onCancel={handleCancelModelSwitch}
+          open={true}
+          confirmText="Switch & New Chat"
+          cancelText="Cancel"
+          confirmVariant="primary"
+        >
+          <p className="text-text-primary">
+            Switching to <strong>{pendingModelSwitch}</strong> will start a new chat. Your current
+            conversation stays available in the sidebar.
+          </p>
+        </StyledModal>
       )}
-    >
-      <ChatSidebar
-        sessions={sessions}
-        activeSessionId={activeSessionId}
-        onSessionSelect={handleSessionSelect}
-        onNewChat={handleNewChat}
-        onClearHistory={handleClearHistory}
-        isInModal={isInModal}
-      />
-      <div className="flex-1 flex flex-col min-h-0">
-        <KbPolicyPromptBanner />
-        <div className="px-6 py-3 border-b border-border-subtle bg-surface-secondary flex items-center justify-between h-[75px] flex-shrink-0">
-          <h2 className="text-lg font-semibold text-text-primary">
-            {activeSession?.title || 'New Chat'}
-          </h2>
-          <div className="flex items-center gap-4">
-            {remoteOllamaUrlSetting?.value && (
-              <span
-                className={classNames(
-                  'text-xs rounded px-2 py-1 font-medium',
-                  remoteStatus?.connected === false
-                    ? 'text-red-700 bg-red-50 border border-red-200'
-                    : 'text-green-700 bg-green-50 border border-green-200'
-                )}
-              >
-                {remoteStatus?.connected === false ? 'Remote Disconnected' : 'Remote Connected'}
-              </span>
-            )}
-            <div className="flex items-center gap-2">
-              <label htmlFor="model-select" className="text-sm text-text-secondary">
-                Model:
-              </label>
-              {isLoadingModels ? (
-                <div className="text-sm text-text-muted">Loading models...</div>
-              ) : installedModels.length === 0 ? (
-                <div className="text-sm text-red-600">No models installed</div>
-              ) : (
-                <select
-                  id="model-select"
-                  value={pendingModelSwitch ?? selectedModel}
-                  onChange={(e) => handleUserSelectedModel(e.target.value)}
-                  className="px-3 py-1.5 border border-border-default rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-desert-green focus:border-transparent bg-surface-primary"
+      <div
+        className={classNames(
+          'flex border border-border-subtle overflow-hidden shadow-sm w-full',
+          isInModal ? 'h-full rounded-lg' : 'h-screen'
+        )}
+      >
+        <ChatSidebar
+          sessions={sessions}
+          activeSessionId={activeSessionId}
+          onSessionSelect={handleSessionSelect}
+          onNewChat={handleNewChat}
+          onClearHistory={handleClearHistory}
+          isInModal={isInModal}
+        />
+        <div className="flex-1 flex flex-col min-h-0">
+          <KbPolicyPromptBanner />
+          <div className="px-6 py-3 border-b border-border-subtle bg-surface-secondary flex items-center justify-between h-[75px] flex-shrink-0">
+            <h2 className="text-lg font-semibold text-text-primary">
+              {activeSession?.title || 'New Chat'}
+            </h2>
+            <div className="flex items-center gap-4">
+              {remoteOllamaUrlSetting?.value && (
+                <span
+                  className={classNames(
+                    'text-xs rounded px-2 py-1 font-medium',
+                    remoteStatus?.connected === false
+                      ? 'text-red-700 bg-red-50 border border-red-200'
+                      : 'text-green-700 bg-green-50 border border-green-200'
+                  )}
                 >
-                  {installedModels.map((model) => (
-                    <option key={model.name} value={model.name}>
-                      {model.name}{model.size > 0 ? ` (${formatBytes(model.size)})` : ''}
+                  {remoteStatus?.connected === false ? 'Remote Disconnected' : 'Remote Connected'}
+                </span>
+              )}
+              <div className="flex items-center gap-2">
+                <label htmlFor="collection-filter" className="text-sm text-text-secondary">
+                  Search in:
+                </label>
+                <select
+                  id="collection-filter"
+                  value={selectedCollection}
+                  onChange={(event) => setSelectedCollection(event.target.value)}
+                  className="max-w-48 rounded-lg border border-border-default bg-surface-primary px-3 py-1.5 text-sm text-text-primary focus:border-transparent focus:outline-none focus:ring-2 focus:ring-desert-green"
+                >
+                  <option value="">All knowledge</option>
+                  {knowledgeCollections.map((collection) => (
+                    <option key={collection} value={collection}>
+                      {collection}
                     </option>
                   ))}
                 </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <label htmlFor="model-select" className="text-sm text-text-secondary">
+                  Model:
+                </label>
+                {isLoadingModels ? (
+                  <div className="text-sm text-text-muted">Loading models...</div>
+                ) : installedModels.length === 0 ? (
+                  <div className="text-sm text-red-600">No models installed</div>
+                ) : (
+                  <select
+                    id="model-select"
+                    value={pendingModelSwitch ?? selectedModel}
+                    onChange={(e) => handleUserSelectedModel(e.target.value)}
+                    className="px-3 py-1.5 border border-border-default rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-desert-green focus:border-transparent bg-surface-primary"
+                  >
+                    {installedModels.map((model) => (
+                      <option key={model.name} value={model.name}>
+                        {model.name}
+                        {model.size > 0 ? ` (${formatBytes(model.size)})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+              {isInModal && (
+                <button
+                  onClick={() => {
+                    if (onClose) {
+                      onClose()
+                    }
+                  }}
+                  className="rounded-lg hover:bg-surface-secondary transition-colors"
+                >
+                  <IconX className="h-6 w-6 text-text-muted" />
+                </button>
               )}
             </div>
-            {isInModal && (
-              <button
-                onClick={() => {
-                  if (onClose) {
-                    onClose()
-                  }
-                }}
-                className="rounded-lg hover:bg-surface-secondary transition-colors"
-              >
-                <IconX className="h-6 w-6 text-text-muted" />
-              </button>
-            )}
           </div>
+          <ChatInterface
+            messages={messages}
+            onSendMessage={handleSendMessage}
+            isLoading={isStreamingResponse || chatMutation.isPending}
+            chatSuggestions={chatSuggestions}
+            chatSuggestionsEnabled={suggestionsEnabled}
+            chatSuggestionsLoading={chatSuggestionsLoading}
+            rewriteModelAvailable={rewriteModelAvailable}
+            loadingLabel={selectedCollection ? 'Searching local knowledge…' : 'Analyzing…'}
+          />
         </div>
-        <ChatInterface
-          messages={messages}
-          onSendMessage={handleSendMessage}
-          isLoading={isStreamingResponse || chatMutation.isPending}
-          chatSuggestions={chatSuggestions}
-          chatSuggestionsEnabled={suggestionsEnabled}
-          chatSuggestionsLoading={chatSuggestionsLoading}
-          rewriteModelAvailable={rewriteModelAvailable}
-        />
       </div>
-    </div>
     </>
   )
 }

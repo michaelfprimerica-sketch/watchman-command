@@ -33,6 +33,7 @@ export type OllamaChatRequest = {
   messages: OllamaChatMessage[]
   stream?: boolean
   sessionId?: number
+  collection?: string
 }
 
 export type OllamaChatResponse = {
@@ -53,7 +54,7 @@ export type NomadInstalledModel = {
 }
 
 export type NomadChatResponse = {
-  message: { content: string; thinking?: string }
+  message: { content: string; reasoningActive?: boolean }
   done: boolean
   model: string
 }

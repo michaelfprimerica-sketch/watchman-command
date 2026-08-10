@@ -7,17 +7,36 @@ import app from '@adonisjs/core/services/app'
 import { randomBytes } from 'node:crypto'
 import { sanitizeFilename } from '../utils/fs.js'
 import { basename } from 'node:path'
-import { deleteFileSchema, embedFileSchema, estimateBatchSchema, fileSourceSchema, getJobStatusSchema } from '#validators/rag'
+import {
+  deleteFileSchema,
+  deleteKnowledgeCollectionSchema,
+  embedFileSchema,
+  estimateBatchSchema,
+  fileSourceSchema,
+  getJobStatusSchema,
+  renameKnowledgeCollectionSchema,
+  updateFileCollectionSchema,
+} from '#validators/rag'
 import logger from '@adonisjs/core/services/logger'
+import { normalizeKnowledgeCollection } from '../utils/knowledge_collection.js'
 
 @inject()
 export default class RagController {
-  constructor(private ragService: RagService) { }
+  constructor(private ragService: RagService) {}
 
   public async upload({ request, response }: HttpContext) {
     const uploadedFile = request.file('file')
     if (!uploadedFile) {
       return response.status(400).json({ error: 'No file uploaded' })
+    }
+
+    let collection: string | null
+    try {
+      collection = normalizeKnowledgeCollection(request.input('collection', null))
+    } catch (error) {
+      return response.status(422).json({
+        error: error instanceof Error ? error.message : 'Invalid collection name.',
+      })
     }
 
     const randomSuffix = randomBytes(6).toString('hex')
@@ -34,6 +53,7 @@ export default class RagController {
     const result = await EmbedFileJob.dispatch({
       filePath: fullPath,
       fileName,
+      ...(collection ? { collection } : {}),
     })
 
     return response.status(202).json({
@@ -42,6 +62,7 @@ export default class RagController {
       fileName,
       filePath: `/${RagService.UPLOADS_STORAGE_PATH}/${fileName}`,
       alreadyProcessing: !result.created,
+      collection,
     })
   }
 
@@ -66,6 +87,32 @@ export default class RagController {
   public async getStoredFiles({ response }: HttpContext) {
     const files = await this.ragService.getStoredFiles()
     return response.status(200).json({ files })
+  }
+
+  public async getKnowledgeCollections({ response }: HttpContext) {
+    const collections = await this.ragService.getKnowledgeCollections()
+    return response.status(200).json({ collections })
+  }
+
+  public async updateFileCollection({ request, response }: HttpContext) {
+    const { source, collection } = await request.validateUsing(updateFileCollectionSchema)
+    const result = await this.ragService.updateFileCollection(source, collection ?? null)
+    if (!result.success) return response.status(503).json({ error: result.message })
+    return response.status(200).json({ message: result.message })
+  }
+
+  public async renameKnowledgeCollection({ request, response }: HttpContext) {
+    const { oldName, newName } = await request.validateUsing(renameKnowledgeCollectionSchema)
+    const result = await this.ragService.renameKnowledgeCollection(oldName, newName)
+    if (!result.success) return response.status(422).json({ error: result.message })
+    return response.status(200).json({ message: result.message })
+  }
+
+  public async deleteKnowledgeCollection({ request, response }: HttpContext) {
+    const { name } = await request.validateUsing(deleteKnowledgeCollectionSchema)
+    const result = await this.ragService.deleteKnowledgeCollection(name)
+    if (!result.success) return response.status(422).json({ error: result.message })
+    return response.status(200).json({ message: result.message })
   }
 
   public async getFileWarnings({ response }: HttpContext) {

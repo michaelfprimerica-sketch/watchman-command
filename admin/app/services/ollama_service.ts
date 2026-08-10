@@ -1,6 +1,9 @@
 import { inject } from '@adonisjs/core'
 import OpenAI from 'openai'
-import type { ChatCompletionChunk, ChatCompletionMessageParam } from 'openai/resources/chat/completions.js'
+import type {
+  ChatCompletionChunk,
+  ChatCompletionMessageParam,
+} from 'openai/resources/chat/completions.js'
 import type { Stream } from 'openai/streaming.js'
 import { NomadOllamaModel } from '../../types/ollama.js'
 import { EMBEDDING_MODEL_NAME, FALLBACK_RECOMMENDED_OLLAMA_MODELS } from '../../constants/ollama.js'
@@ -16,6 +19,15 @@ import { BROADCAST_CHANNELS } from '../../constants/broadcast.js'
 import env from '#start/env'
 import { NOMAD_API_DEFAULT_BASE_URL } from '../../constants/misc.js'
 import KVStore from '#models/kv_store'
+import {
+  normalizeCompleteReasoning,
+  SafeReasoningStreamNormalizer,
+} from '../utils/reasoning_privacy.js'
+import {
+  hasUsableRecommendedModels,
+  isUsableModelCatalogCache,
+  ModelCapabilityCache,
+} from '../utils/model_catalog.js'
 
 const NOMAD_MODELS_API_PATH = '/api/v1/ollama/models'
 const MODELS_CACHE_FILE = path.join(process.cwd(), 'storage', 'ollama-models-cache.json')
@@ -29,13 +41,13 @@ export type NomadInstalledModel = {
 }
 
 export type NomadChatResponse = {
-  message: { content: string; thinking?: string }
+  message: { content: string; reasoningActive?: boolean }
   done: boolean
   model: string
 }
 
 export type NomadChatStreamChunk = {
-  message: { content: string; thinking?: string }
+  message: { content: string; reasoningActive?: boolean }
   done: boolean
 }
 
@@ -45,6 +57,8 @@ type ChatInput = {
   think?: boolean | 'medium'
   stream?: boolean
   numCtx?: number
+  thinkingCapable?: boolean
+  signal?: AbortSignal
 }
 
 @inject()
@@ -53,7 +67,11 @@ export class OllamaService {
   private baseUrl: string | null = null
   private initPromise: Promise<void> | null = null
   private isOllamaNative: boolean | null = null
-  private activeDownloads: Map<string, Promise<{ success: boolean; message: string; retryable?: boolean }>> = new Map()
+  private activeDownloads: Map<
+    string,
+    Promise<{ success: boolean; message: string; retryable?: boolean }>
+  > = new Map()
+  private thinkingCapabilityCache = new ModelCapabilityCache()
 
   constructor() {}
 
@@ -111,7 +129,9 @@ export class OllamaService {
     // Deduplicate concurrent downloads of the same model
     const existing = this.activeDownloads.get(model)
     if (existing) {
-      logger.info(`[OllamaService] Download already in progress for "${model}", waiting on existing download.`)
+      logger.info(
+        `[OllamaService] Download already in progress for "${model}", waiting on existing download.`
+      )
       return existing
     }
 
@@ -222,9 +242,8 @@ export class OllamaService {
                   aggTotal += total
                 }
 
-                const percent = aggTotal > 0
-                  ? parseFloat(((aggCompleted / aggTotal) * 100).toFixed(2))
-                  : 0
+                const percent =
+                  aggTotal > 0 ? Number.parseFloat(((aggCompleted / aggTotal) * 100).toFixed(2)) : 0
 
                 // Throttle broadcasts. Always call the progressCallback though — the worker
                 // uses it to update job state in Redis, which should reflect the latest view.
@@ -259,6 +278,7 @@ export class OllamaService {
       })
 
       logger.info(`[OllamaService] Model "${model}" downloaded successfully.`)
+      this.thinkingCapabilityCache.invalidate(model)
       return { success: true, message: 'Model downloaded successfully.' }
     } catch (error) {
       // Detect axios cancel (signal-triggered abort). Don't broadcast an error event for
@@ -274,9 +294,7 @@ export class OllamaService {
       }
 
       const errorMessage = error instanceof Error ? error.message : String(error)
-      logger.error(
-        `[OllamaService] Failed to download model "${model}": ${errorMessage}`
-      )
+      logger.error(`[OllamaService] Failed to download model "${model}": ${errorMessage}`)
 
       // Check for version mismatch (Ollama 412 response)
       const isVersionMismatch = errorMessage.includes('newer version of Ollama')
@@ -329,17 +347,25 @@ export class OllamaService {
     if (chatRequest.think) {
       params.think = chatRequest.think
     }
+    if (chatRequest.think === 'medium') {
+      params.reasoning_effort = 'medium'
+    } else if (chatRequest.thinkingCapable && chatRequest.think === false) {
+      params.reasoning_effort = 'none'
+    }
     if (chatRequest.numCtx) {
       params.num_ctx = chatRequest.numCtx
     }
 
-    const response = await this.openai.chat.completions.create(params)
+    const response = await this.openai.chat.completions.create(params, {
+      signal: chatRequest.signal,
+    })
     const choice = response.choices[0]
+    const safeMessage = normalizeCompleteReasoning(choice.message.content ?? '', choice.message)
 
     return {
       message: {
-        content: choice.message.content ?? '',
-        thinking: (choice.message as any).thinking ?? undefined,
+        content: safeMessage.content,
+        reasoningActive: safeMessage.reasoningActive,
       },
       done: true,
       model: response.model,
@@ -360,72 +386,40 @@ export class OllamaService {
     if (chatRequest.think) {
       params.think = chatRequest.think
     }
+    if (chatRequest.think === 'medium') {
+      params.reasoning_effort = 'medium'
+    } else if (chatRequest.thinkingCapable && chatRequest.think === false) {
+      params.reasoning_effort = 'none'
+    }
     if (chatRequest.numCtx) {
       params.num_ctx = chatRequest.numCtx
     }
 
-    const stream = (await this.openai.chat.completions.create(params)) as unknown as Stream<ChatCompletionChunk>
-
-    // Returns how many trailing chars of `text` could be the start of `tag`
-    function partialTagSuffix(tag: string, text: string): number {
-      for (let len = Math.min(tag.length - 1, text.length); len >= 1; len--) {
-        if (text.endsWith(tag.slice(0, len))) return len
-      }
-      return 0
-    }
+    const stream = (await this.openai.chat.completions.create(params, {
+      signal: chatRequest.signal,
+    })) as unknown as Stream<ChatCompletionChunk>
 
     async function* normalize(): AsyncGenerator<NomadChatStreamChunk> {
-      // Stateful parser for <think>...</think> tags that may be split across chunks.
-      // Ollama provides thinking natively via delta.thinking; OpenAI-compatible backends
-      // (LM Studio, llama.cpp, etc.) embed them inline in delta.content.
-      let tagBuffer = ''
-      let inThink = false
+      const safeReasoning = new SafeReasoningStreamNormalizer()
 
       for await (const chunk of stream) {
         const delta = chunk.choices[0]?.delta
-        const nativeThinking: string = (delta as any)?.thinking ?? ''
         const rawContent: string = delta?.content ?? ''
-
-        // Parse <think> tags out of the content stream
-        tagBuffer += rawContent
-        let parsedContent = ''
-        let parsedThinking = ''
-
-        while (tagBuffer.length > 0) {
-          if (inThink) {
-            const closeIdx = tagBuffer.indexOf('</think>')
-            if (closeIdx !== -1) {
-              parsedThinking += tagBuffer.slice(0, closeIdx)
-              tagBuffer = tagBuffer.slice(closeIdx + 8)
-              inThink = false
-            } else {
-              const hold = partialTagSuffix('</think>', tagBuffer)
-              parsedThinking += tagBuffer.slice(0, tagBuffer.length - hold)
-              tagBuffer = tagBuffer.slice(tagBuffer.length - hold)
-              break
-            }
-          } else {
-            const openIdx = tagBuffer.indexOf('<think>')
-            if (openIdx !== -1) {
-              parsedContent += tagBuffer.slice(0, openIdx)
-              tagBuffer = tagBuffer.slice(openIdx + 7)
-              inThink = true
-            } else {
-              const hold = partialTagSuffix('<think>', tagBuffer)
-              parsedContent += tagBuffer.slice(0, tagBuffer.length - hold)
-              tagBuffer = tagBuffer.slice(tagBuffer.length - hold)
-              break
-            }
-          }
-        }
+        const safeChunk = safeReasoning.push(rawContent, delta)
 
         yield {
           message: {
-            content: parsedContent,
-            thinking: nativeThinking + parsedThinking,
+            content: safeChunk.content,
+            reasoningActive: safeChunk.reasoningActive,
           },
-          done: chunk.choices[0]?.finish_reason !== null && chunk.choices[0]?.finish_reason !== undefined,
+          done:
+            chunk.choices[0]?.finish_reason !== null &&
+            chunk.choices[0]?.finish_reason !== undefined,
         }
+      }
+      const trailing = safeReasoning.finish()
+      if (trailing.content) {
+        yield { message: trailing, done: true }
       }
     }
 
@@ -435,6 +429,8 @@ export class OllamaService {
   public async checkModelHasThinking(modelName: string): Promise<boolean> {
     await this._ensureDependencies()
     if (!this.baseUrl) return false
+    const cached = this.thinkingCapabilityCache.get(modelName)
+    if (cached !== undefined) return cached
 
     try {
       const response = await axios.post(
@@ -442,7 +438,11 @@ export class OllamaService {
         { model: modelName },
         { timeout: 5000 }
       )
-      return Array.isArray(response.data?.capabilities) && response.data.capabilities.includes('thinking')
+      const capable =
+        Array.isArray(response.data?.capabilities) &&
+        response.data.capabilities.includes('thinking')
+      this.thinkingCapabilityCache.recordSuccessfulLookup(modelName, capable)
+      return capable
     } catch {
       // Non-Ollama backends don't expose /api/show — assume no thinking support
       return false
@@ -460,12 +460,16 @@ export class OllamaService {
         data: { model: modelName },
         timeout: 10000,
       })
+      this.thinkingCapabilityCache.invalidate(modelName)
       return { success: true, message: `Model "${modelName}" deleted.` }
     } catch (error) {
       logger.error(
         `[OllamaService] Failed to delete model "${modelName}": ${error instanceof Error ? error.message : error}`
       )
-      return { success: false, message: 'Failed to delete model. This may not be an Ollama backend.' }
+      return {
+        success: false,
+        message: 'Failed to delete model. This may not be an Ollama backend.',
+      }
     }
   }
 
@@ -503,7 +507,8 @@ export class OllamaService {
     const anyErr = err as any
     const data = anyErr?.response?.data
     if (data) parts.push(typeof data === 'string' ? data : JSON.stringify(data))
-    if (anyErr?.error) parts.push(typeof anyErr.error === 'string' ? anyErr.error : JSON.stringify(anyErr.error))
+    if (anyErr?.error)
+      parts.push(typeof anyErr.error === 'string' ? anyErr.error : JSON.stringify(anyErr.error))
     const haystack = parts.join(' ').toLowerCase()
     return (
       (haystack.includes('context length') && haystack.includes('exceed')) ||
@@ -525,7 +530,8 @@ export class OllamaService {
       throw new Error('AI service is not initialized.')
     }
 
-    const cap = (arr: string[], max: number) => arr.map((s) => (s.length > max ? s.slice(0, max) : s))
+    const cap = (arr: string[], max: number) =>
+      arr.map((s) => (s.length > max ? s.slice(0, max) : s))
 
     // Generous pre-cap (#881): fine for the native path (num_ctx=8192) but can still exceed a
     // 2048-context fallback on dense content. The context-length retry below is the hard backstop.
@@ -540,7 +546,10 @@ export class OllamaService {
       // Retry once, truncated hard enough to fit a 2048-token context at any density, so the
       // chunk is embedded (truncated) instead of dropped and the job doesn't storm.
       const hardCapped = cap(input, OllamaService.EMBED_CONTEXT_SAFE_CHARS)
-      const reduced = hardCapped.reduce((n, s, i) => (s.length < safeInput[i].length ? n + 1 : n), 0)
+      const reduced = hardCapped.reduce(
+        (n, s, i) => (s.length < safeInput[i].length ? n + 1 : n),
+        0
+      )
       logger.warn(
         '[OllamaService] embed: context-length overflow; retrying %d/%d inputs hard-capped at %d chars',
         reduced,
@@ -558,7 +567,10 @@ export class OllamaService {
    * smaller effective context and would only fail the same way — the caller (embed) retries it
    * truncated instead.
    */
-  private async _embedWithFallback(model: string, input: string[]): Promise<{ embeddings: number[][] }> {
+  private async _embedWithFallback(
+    model: string,
+    input: string[]
+  ): Promise<{ embeddings: number[][] }> {
     try {
       // Pass num_ctx explicitly so we don't depend on the embedding model's modelfile defaults.
       // Some installs ship nomic-embed-text:v1.5 with num_ctx=2048; 8192 matches its RoPE-extrapolated
@@ -627,9 +639,7 @@ export class OllamaService {
       const models: Array<{ name?: string; size_vram?: number }> = response.data?.models ?? []
       // Match any loaded model whose name signals it's an embedding model.
       // nomic-embed-text, mxbai-embed-large, snowflake-arctic-embed, etc. all follow this convention.
-      return models.some(
-        (m) => m.name?.toLowerCase().includes('embed') && (m.size_vram ?? 0) > 0
-      )
+      return models.some((m) => m.name?.toLowerCase().includes('embed') && (m.size_vram ?? 0) > 0)
     } catch (err: any) {
       // /api/ps unreachable (Ollama down, non-native backend, etc.) — fail closed: assume CPU,
       // which means we'll pace. Better to over-pace than risk box-killing CPU saturation.
@@ -764,7 +774,7 @@ export class OllamaService {
   ): Promise<{ models: NomadOllamaModel[]; hasMore: boolean } | null> {
     try {
       const models = await this.retrieveAndRefreshModels(sort, force)
-      if (!models) {
+      if (!hasUsableRecommendedModels(models)) {
         logger.warn(
           '[OllamaService] Returning fallback recommended models due to failure in fetching available models'
         )
@@ -832,11 +842,9 @@ export class OllamaService {
       const baseUrl = env.get('NOMAD_API_URL') || NOMAD_API_DEFAULT_BASE_URL
       const fullUrl = new URL(NOMAD_MODELS_API_PATH, baseUrl).toString()
 
-      const response = await axios.get(fullUrl)
+      const response = await axios.get(fullUrl, { timeout: 10_000 })
       if (!response.data || !Array.isArray(response.data.models)) {
-        logger.warn(
-          `[OllamaService] Invalid response format when fetching available models: ${JSON.stringify(response.data)}`
-        )
+        logger.warn('[OllamaService] Invalid response format from available-model catalog')
         return null
       }
 
@@ -848,6 +856,11 @@ export class OllamaService {
           tags: model.tags.filter((tag) => !tag.cloud),
         }))
         .filter((model) => model.tags.length > 0)
+
+      if (noCloud.length === 0) {
+        logger.warn('[OllamaService] Available-model catalog contained no usable local models')
+        return null
+      }
 
       await this.writeModelsToCache(noCloud)
       return this.sortModels(noCloud, sort)
@@ -872,7 +885,7 @@ export class OllamaService {
       const cacheData = await fs.readFile(MODELS_CACHE_FILE, 'utf-8')
       const models = JSON.parse(cacheData) as NomadOllamaModel[]
 
-      if (!Array.isArray(models)) {
+      if (!isUsableModelCatalogCache(models)) {
         logger.warn('[OllamaService] Invalid cache format, will fetch fresh data')
         return null
       }
@@ -890,6 +903,7 @@ export class OllamaService {
 
   private async writeModelsToCache(models: NomadOllamaModel[]): Promise<void> {
     try {
+      if (models.length === 0) return
       await fs.mkdir(path.dirname(MODELS_CACHE_FILE), { recursive: true })
       await fs.writeFile(MODELS_CACHE_FILE, JSON.stringify(models, null, 2), 'utf-8')
       logger.info('[OllamaService] Successfully cached available models')

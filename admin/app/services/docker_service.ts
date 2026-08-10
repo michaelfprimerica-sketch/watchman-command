@@ -4,6 +4,7 @@ import logger from '@adonisjs/core/services/logger'
 import { inject } from '@adonisjs/core'
 import transmit from '@adonisjs/transmit/services/main'
 import { doResumableDownloadWithRetry } from '../utils/downloads.js'
+import { mapGfxToHsaOverride, withAmdOllamaEnvironment } from '../utils/amd_hsa_override.js'
 import { join } from 'path'
 import os from 'node:os'
 import env from '#start/env'
@@ -46,7 +47,10 @@ export class DockerService {
   // storage volume relocates every child app too (#938). null = not yet resolved.
   private _hostStorageRoot: string | null = null
 
-  private _servicesStatusCache: { data: { service_name: string; status: string }[]; expiresAt: number } | null = null
+  private _servicesStatusCache: {
+    data: { service_name: string; status: string }[]
+    expiresAt: number
+  } | null = null
   private _servicesStatusInflight: Promise<{ service_name: string; status: string }[]> | null = null
 
   constructor() {
@@ -118,7 +122,9 @@ export class DockerService {
         if (serviceName === SERVICE_NAMES.KIWIX) {
           const isLegacy = await this.isKiwixOnLegacyConfig()
           if (isLegacy) {
-            logger.info('[DockerService] Kiwix on legacy glob config — running migration instead of restart.')
+            logger.info(
+              '[DockerService] Kiwix on legacy glob config — running migration instead of restart.'
+            )
             await this.migrateKiwixToLibraryMode()
             this.invalidateServicesStatusCache()
             return { success: true, message: 'Kiwix migrated to library mode successfully.' }
@@ -176,14 +182,16 @@ export class DockerService {
     }
     if (this._servicesStatusInflight) return this._servicesStatusInflight
 
-    this._servicesStatusInflight = this._fetchServicesStatus().then((data) => {
-      this._servicesStatusCache = { data, expiresAt: Date.now() + 5000 }
-      this._servicesStatusInflight = null
-      return data
-    }).catch((err) => {
-      this._servicesStatusInflight = null
-      throw err
-    })
+    this._servicesStatusInflight = this._fetchServicesStatus()
+      .then((data) => {
+        this._servicesStatusCache = { data, expiresAt: Date.now() + 5000 }
+        this._servicesStatusInflight = null
+        return data
+      })
+      .catch((err) => {
+        this._servicesStatusInflight = null
+        throw err
+      })
     return this._servicesStatusInflight
   }
 
@@ -411,8 +419,15 @@ export class DockerService {
           )
         }
       } catch (error: any) {
-        logger.warn({ err: error }, `[DockerService] Error during container cleanup for ${serviceName}`)
-        this._broadcast(serviceName, 'cleanup-warning', 'Warning during container cleanup. Check server logs for details.')
+        logger.warn(
+          { err: error },
+          `[DockerService] Error during container cleanup for ${serviceName}`
+        )
+        this._broadcast(
+          serviceName,
+          'cleanup-warning',
+          'Warning during container cleanup. Check server logs for details.'
+        )
       }
 
       // Step 3: Clear volumes/data if needed
@@ -441,7 +456,10 @@ export class DockerService {
           this._broadcast(serviceName, 'no-volumes', `No volumes found to clear`)
         }
       } catch (error: any) {
-        logger.warn({ err: error }, `[DockerService] Error during volume cleanup for ${serviceName}`)
+        logger.warn(
+          { err: error },
+          `[DockerService] Error during volume cleanup for ${serviceName}`
+        )
         this._broadcast(
           serviceName,
           'volume-cleanup-warning',
@@ -491,7 +509,9 @@ export class DockerService {
     // dockerode surfaces port conflicts as e.g.
     //   "...Bind for 0.0.0.0:11434 failed: port is already allocated"
     //   "...listen tcp 0.0.0.0:8090: bind: address already in use"
-    const portMatch = raw.match(/(?:Bind for [^:]+:(\d+) failed: port is already allocated|:(\d+): bind: address already in use)/i)
+    const portMatch = raw.match(
+      /(?:Bind for [^:]+:(\d+) failed: port is already allocated|:(\d+): bind: address already in use)/i
+    )
     if (portMatch) {
       const port = portMatch[1] || portMatch[2]
       const portText = port ? `port ${port}` : 'a required port'
@@ -583,9 +603,7 @@ export class DockerService {
       if (firstColon < 0) return b
       const hostSrc = b.slice(0, firstColon)
       const rest = b.slice(firstColon) // includes leading ':'
-      const seededRoot = seededRoots.find(
-        (r) => hostSrc === r || hostSrc.startsWith(r + '/')
-      )
+      const seededRoot = seededRoots.find((r) => hostSrc === r || hostSrc.startsWith(r + '/'))
       if (seededRoot) {
         return `${root}${hostSrc.slice(seededRoot.length)}${rest}`
       }
@@ -599,7 +617,7 @@ export class DockerService {
    * This method will also transmit server-sent events to the client to notify of progress.
    * @param serviceName
    * @returns
-    */
+   */
   async _createContainer(
     service: Service & { dependencies?: Service[] },
     containerConfig: any
@@ -778,7 +796,9 @@ export class DockerService {
               'gpu-config',
               `AMD GPU detected but acceleration is disabled via ai.amdGpuAcceleration. Using CPU-only configuration.`
             )
-            logger.info('[DockerService] AMD GPU acceleration disabled by KV opt-out; using CPU-only configuration.')
+            logger.info(
+              '[DockerService] AMD GPU acceleration disabled by KV opt-out; using CPU-only configuration.'
+            )
           }
         } else if (gpuResult.toolkitMissing) {
           this._broadcast(
@@ -806,9 +826,7 @@ export class DockerService {
           // gfx-aware HSA override — only set for cards that actually need it. See
           // _resolveAmdHsaOverride() for the resolution order and gfx → version mapping.
           const hsaOverride = await this._resolveAmdHsaOverride()
-          if (hsaOverride) {
-            ollamaEnv.push(`HSA_OVERRIDE_GFX_VERSION=${hsaOverride}`)
-          }
+          ollamaEnv.push(...withAmdOllamaEnvironment([], hsaOverride))
         }
       }
 
@@ -868,11 +886,15 @@ export class DockerService {
 
       // If Ollama was just installed, trigger Nomad docs discovery and embedding
       if (service.service_name === SERVICE_NAMES.OLLAMA) {
-        logger.info('[DockerService] Ollama installation complete. Default behavior is to not enable chat suggestions.')
+        logger.info(
+          '[DockerService] Ollama installation complete. Default behavior is to not enable chat suggestions.'
+        )
         await KVStore.setValue('chat.suggestionsEnabled', false)
 
-        logger.info('[DockerService] Ollama installation complete. Triggering Nomad docs discovery...')
-        
+        logger.info(
+          '[DockerService] Ollama installation complete. Triggering Nomad docs discovery...'
+        )
+
         // Need to use dynamic imports here to avoid circular dependency
         const ollamaService = new (await import('./ollama_service.js')).OllamaService()
         const ragService = new (await import('./rag_service.js')).RagService(this, ollamaService)
@@ -925,7 +947,10 @@ export class DockerService {
 
       return { success: true, message: `Service ${serviceName} container removed successfully` }
     } catch (error: any) {
-      logger.error({ err: error }, `[DockerService] Error removing service container ${serviceName}`)
+      logger.error(
+        { err: error },
+        `[DockerService] Error removing service container ${serviceName}`
+      )
       return {
         success: false,
         message: `Failed to remove service ${serviceName} container. Check server logs for details.`,
@@ -1286,7 +1311,11 @@ export class DockerService {
       this._broadcast(SERVICE_NAMES.KIWIX, 'migrating', 'Migrating kiwix to library mode...')
       const kiwixLibraryService = new KiwixLibraryService()
       await kiwixLibraryService.rebuildFromDisk()
-      this._broadcast(SERVICE_NAMES.KIWIX, 'migrating', 'Built kiwix library XML from existing ZIM files.')
+      this._broadcast(
+        SERVICE_NAMES.KIWIX,
+        'migrating',
+        'Built kiwix library XML from existing ZIM files.'
+      )
 
       // Step 2: Stop and remove old container (leave ZIM volumes intact)
       const containers = await this.docker.listContainers({ all: true })
@@ -1294,13 +1323,17 @@ export class DockerService {
       if (containerInfo) {
         const oldContainer = this.docker.getContainer(containerInfo.Id)
         if (containerInfo.State === 'running') {
-          await oldContainer.stop({ t: 10 }).catch((e: any) =>
-            logger.warn(`[DockerService] Kiwix stop warning during migration: ${e.message}`)
-          )
+          await oldContainer
+            .stop({ t: 10 })
+            .catch((e: any) =>
+              logger.warn(`[DockerService] Kiwix stop warning during migration: ${e.message}`)
+            )
         }
-        await oldContainer.remove({ force: true }).catch((e: any) =>
-          logger.warn(`[DockerService] Kiwix remove warning during migration: ${e.message}`)
-        )
+        await oldContainer
+          .remove({ force: true })
+          .catch((e: any) =>
+            logger.warn(`[DockerService] Kiwix remove warning during migration: ${e.message}`)
+          )
       }
 
       // Step 3: Read the service record and authoritatively set the correct command.
@@ -1321,7 +1354,11 @@ export class DockerService {
 
       // Step 4: Recreate container directly (skipping _createContainer to avoid re-downloading
       // the bootstrap ZIM — ZIM files already exist on disk)
-      this._broadcast(SERVICE_NAMES.KIWIX, 'migrating', 'Recreating kiwix container with library mode config...')
+      this._broadcast(
+        SERVICE_NAMES.KIWIX,
+        'migrating',
+        'Recreating kiwix container with library mode config...'
+      )
       const newContainer = await this.docker.createContainer({
         Image: service.container_image,
         name: service.service_name,
@@ -1344,7 +1381,11 @@ export class DockerService {
       await service.save()
       this.activeInstallations.delete(SERVICE_NAMES.KIWIX)
 
-      this._broadcast(SERVICE_NAMES.KIWIX, 'migrated', 'Kiwix successfully migrated to library mode.')
+      this._broadcast(
+        SERVICE_NAMES.KIWIX,
+        'migrated',
+        'Kiwix successfully migrated to library mode.'
+      )
       logger.info('[DockerService] Kiwix migration to library mode complete.')
     } catch (error: any) {
       logger.error(`[DockerService] Kiwix migration failed: ${error.message}`)
@@ -1361,7 +1402,10 @@ export class DockerService {
    *   AMD has no Docker runtime registration to query.
    * Fallback: lspci for host-based installs.
    */
-  private async _detectGPUType(): Promise<{ type: 'nvidia' | 'amd' | 'none'; toolkitMissing?: boolean }> {
+  private async _detectGPUType(): Promise<{
+    type: 'nvidia' | 'amd' | 'none'
+    toolkitMissing?: boolean
+  }> {
     try {
       // Primary: Check Docker daemon for nvidia runtime (works from inside containers)
       try {
@@ -1373,7 +1417,9 @@ export class DockerService {
           return { type: 'nvidia' }
         }
       } catch (error: any) {
-        logger.warn(`[DockerService] Could not query Docker info for GPU runtimes: ${error.message}`)
+        logger.warn(
+          `[DockerService] Could not query Docker info for GPU runtimes: ${error.message}`
+        )
       }
 
       // Secondary: install_nomad.sh writes the host-detected GPU type to a marker file in
@@ -1382,7 +1428,9 @@ export class DockerService {
         const marker = (await readFile('/app/storage/.nomad-gpu-type', 'utf8')).trim()
         if (marker === 'nvidia') {
           // Hardware present but Docker doesn't have nvidia runtime → toolkit missing
-          logger.warn('[DockerService] NVIDIA GPU recorded in marker file but NVIDIA Container Toolkit is not installed')
+          logger.warn(
+            '[DockerService] NVIDIA GPU recorded in marker file but NVIDIA Container Toolkit is not installed'
+          )
           return { type: 'none', toolkitMissing: true }
         }
         if (marker === 'amd') {
@@ -1404,7 +1452,9 @@ export class DockerService {
         )
         if (nvidiaCheck.trim()) {
           // GPU hardware found but no nvidia runtime — toolkit not installed
-          logger.warn('[DockerService] NVIDIA GPU detected via lspci but NVIDIA Container Toolkit is not installed')
+          logger.warn(
+            '[DockerService] NVIDIA GPU detected via lspci but NVIDIA Container Toolkit is not installed'
+          )
           return { type: 'none', toolkitMissing: true }
         }
       } catch (error: any) {
@@ -1432,7 +1482,9 @@ export class DockerService {
       try {
         const savedType = await KVStore.getValue('gpu.type')
         if (savedType === 'nvidia' || savedType === 'amd') {
-          logger.info(`[DockerService] No GPU detected live, but KV store has '${savedType}' from previous detection. Using saved value.`)
+          logger.info(
+            `[DockerService] No GPU detected live, but KV store has '${savedType}' from previous detection. Using saved value.`
+          )
           return { type: savedType as 'nvidia' | 'amd' }
         }
       } catch {
@@ -1462,13 +1514,13 @@ export class DockerService {
    * gfx1030 (RX 6800/6700/etc.), gfx1100/1101/1102 (RX 7900/7800/7600) are on AMD's
    * official ROCm allowlist — forcing an override on these breaks GPU discovery.
    * gfx1035 / gfx1036 (RDNA 2 iGPUs like 680M) need 10.3.0 to coerce to gfx1030.
-   * gfx1103 / gfx1150 / gfx1151 (RDNA 3/3.5 iGPUs like 780M / 890M / Strix Halo) need 11.0.0.
+   * gfx1103 (Phoenix/Hawk Point 780M/760M) needs 11.0.0. gfx1150/gfx1151 are
+   * natively supported and must not be coerced.
    *
    * Resolution order:
    *   1. KV `ai.amdHsaOverride` — manual user override; accepts 'none' (disable) or a semver-style value.
    *   2. Marker file `/app/storage/.nomad-amd-gfx` written by install_nomad.sh.
-   *   3. Default: '11.0.0' — preserves prior behavior so existing iGPU users don't regress on
-   *      upgrade. Discrete-card users on existing installs can opt out via the KV.
+   *   3. Default: none — unknown/newer targets use native ROCm discovery.
    *
    * Returns null when no override should be applied.
    */
@@ -1523,24 +1575,14 @@ export class DockerService {
       // install_nomad.sh. Fall through to the default.
     }
 
-    logger.info('[DockerService] No AMD gfx marker; defaulting HSA override to 11.0.0 for backward compatibility')
-    return '11.0.0'
+    logger.warn(
+      '[DockerService] AMD GPU configured without a gfx marker or manual override; using native ROCm discovery'
+    )
+    return null
   }
 
   private _mapGfxToHsaOverride(gfx: string): string | null {
-    // Officially supported by ROCm — no override needed
-    if (gfx === 'gfx1030' || gfx === 'gfx1100' || gfx === 'gfx1101' || gfx === 'gfx1102') {
-      return null
-    }
-    // RDNA 2 variants + iGPUs (gfx1031..gfx1036, e.g. Rembrandt 680M)
-    if (/^gfx103[1-6]$/.test(gfx)) {
-      return '10.3.0'
-    }
-    // RDNA 3 / 3.5 mobile parts (Phoenix 780M = gfx1103, Strix 890M = gfx1150, Strix Halo = gfx1151)
-    if (gfx === 'gfx1103' || gfx === 'gfx1150' || gfx === 'gfx1151') {
-      return '11.0.0'
-    }
-    return '11.0.0'
+    return mapGfxToHsaOverride(gfx)
   }
 
   /**
@@ -1579,14 +1621,20 @@ export class DockerService {
         return { success: false, message: `Service ${serviceName} is not installed` }
       }
       if (this.activeInstallations.has(serviceName)) {
-        return { success: false, message: `Service ${serviceName} already has an operation in progress` }
+        return {
+          success: false,
+          message: `Service ${serviceName} already has an operation in progress`,
+        }
       }
       // DB-level guard mirrors the install path. Unlike the in-memory Set above, this survives a
       // page reload and is visible to other clients, so a second Update click (or one from another
       // tab) is rejected cleanly instead of racing two updateContainer runs into Docker 304/400
       // errors (stop/rename on a container the first run already moved).
       if (service.installation_status === 'installing') {
-        return { success: false, message: `Service ${serviceName} already has an update in progress` }
+        return {
+          success: false,
+          message: `Service ${serviceName} already has an update in progress`,
+        }
       }
 
       this.activeInstallations.add(serviceName)
@@ -1621,9 +1669,7 @@ export class DockerService {
             'update-gpu-config',
             `NVIDIA container runtime detected. Configuring updated container with GPU support...`
           )
-          updatedDeviceRequests = [
-            { Driver: 'nvidia', Count: -1, Capabilities: [['gpu']] },
-          ]
+          updatedDeviceRequests = [{ Driver: 'nvidia', Count: -1, Capabilities: [['gpu']] }]
         } else if (gpuResult.type === 'amd') {
           const amdEnabledRaw = await KVStore.getValue('ai.amdGpuAcceleration')
           const amdAccelerationEnabled = String(amdEnabledRaw) !== 'false'
@@ -1650,7 +1696,11 @@ export class DockerService {
             `NVIDIA GPU detected but NVIDIA Container Toolkit is not installed. Using CPU-only configuration. Install the toolkit and reinstall AI Assistant for GPU acceleration: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html`
           )
         } else {
-          this._broadcast(serviceName, 'update-gpu-config', `No GPU detected. Using CPU-only configuration.`)
+          this._broadcast(
+            serviceName,
+            'update-gpu-config',
+            `No GPU detected. Using CPU-only configuration.`
+          )
         }
       }
 
@@ -1721,10 +1771,7 @@ export class DockerService {
       let finalEnv = baseEnv
       if (updatedAmdGpuConfigured) {
         const hsaOverride = await this._resolveAmdHsaOverride()
-        finalEnv = baseEnv.filter((e: string) => !e.startsWith('HSA_OVERRIDE_GFX_VERSION='))
-        if (hsaOverride) {
-          finalEnv.push(`HSA_OVERRIDE_GFX_VERSION=${hsaOverride}`)
-        }
+        finalEnv = withAmdOllamaEnvironment(baseEnv, hsaOverride)
       }
       finalEnv = await this._withRuntimeAppSecrets(serviceName, finalEnv)
 
@@ -1740,8 +1787,14 @@ export class DockerService {
           Binds: hostConfig.Binds || undefined,
           PortBindings: hostConfig.PortBindings || undefined,
           RestartPolicy: hostConfig.RestartPolicy || undefined,
-          DeviceRequests: serviceName === SERVICE_NAMES.OLLAMA ? updatedDeviceRequests : (hostConfig.DeviceRequests || undefined),
-          Devices: serviceName === SERVICE_NAMES.OLLAMA && updatedAmdDevices ? updatedAmdDevices : (hostConfig.Devices || undefined),
+          DeviceRequests:
+            serviceName === SERVICE_NAMES.OLLAMA
+              ? updatedDeviceRequests
+              : hostConfig.DeviceRequests || undefined,
+          Devices:
+            serviceName === SERVICE_NAMES.OLLAMA && updatedAmdDevices
+              ? updatedAmdDevices
+              : hostConfig.Devices || undefined,
         },
         NetworkingConfig: inspectData.NetworkSettings?.Networks
           ? {
@@ -1764,10 +1817,17 @@ export class DockerService {
         newContainer = await this.docker.createContainer(newContainerConfig)
       } catch (createError: any) {
         // Rollback: rename old container back
-        this._broadcast(serviceName, 'update-rollback', `Failed to create new container: ${createError.message}. Rolling back...`)
+        this._broadcast(
+          serviceName,
+          'update-rollback',
+          `Failed to create new container: ${createError.message}. Rolling back...`
+        )
         await rollbackToOld()
         this.activeInstallations.delete(serviceName)
-        return { success: false, message: `Failed to create updated container: ${createError.message}` }
+        return {
+          success: false,
+          message: `Failed to create updated container: ${createError.message}`,
+        }
       }
 
       // Step 5: Start new container. If the start itself throws (bad device/GPU config,
@@ -1868,7 +1928,10 @@ export class DockerService {
         try {
           await svc.save()
         } catch (saveErr: any) {
-          logger.error({ err: saveErr }, `[DockerService] Failed to reset installation_status for ${serviceName}`)
+          logger.error(
+            { err: saveErr },
+            `[DockerService] Failed to reset installation_status for ${serviceName}`
+          )
         }
       }
     }
@@ -1959,14 +2022,19 @@ export class DockerService {
           await this.docker.getImage(imageRef).remove()
         } catch (imgErr: any) {
           // Non-fatal: the image may be shared with another container or already gone.
-          logger.warn(`[DockerService] Could not remove image ${imageRef} for ${serviceName}: ${imgErr.message}`)
+          logger.warn(
+            `[DockerService] Could not remove image ${imageRef} for ${serviceName}: ${imgErr.message}`
+          )
         }
       }
 
       this.invalidateServicesStatusCache()
       return { success: true, message: `Container ${serviceName} removed` }
     } catch (error: any) {
-      logger.error({ err: error }, `[DockerService] removeCustomAppContainer failed for ${serviceName}`)
+      logger.error(
+        { err: error },
+        `[DockerService] removeCustomAppContainer failed for ${serviceName}`
+      )
       return { success: false, message: error.message }
     }
   }
@@ -2076,8 +2144,7 @@ export class DockerService {
         (s.cpu_stats?.cpu_usage?.total_usage ?? 0) - (s.precpu_stats?.cpu_usage?.total_usage ?? 0)
       const systemDelta =
         (s.cpu_stats?.system_cpu_usage ?? 0) - (s.precpu_stats?.system_cpu_usage ?? 0)
-      const numCpus =
-        s.cpu_stats?.online_cpus ?? s.cpu_stats?.cpu_usage?.percpu_usage?.length ?? 1
+      const numCpus = s.cpu_stats?.online_cpus ?? s.cpu_stats?.cpu_usage?.percpu_usage?.length ?? 1
       const cpuPercent =
         systemDelta > 0 && cpuDelta > 0 ? (cpuDelta / systemDelta) * numCpus * 100 : 0
 
@@ -2133,7 +2200,9 @@ export class DockerService {
       await new Promise((r) => setTimeout(r, 2000))
     }
     // Still in "starting" at timeout — accept it if it's at least running rather than roll back a slow boot.
-    return inspect.State?.Running ? { ready: true } : { ready: false, reason: 'health check timed out' }
+    return inspect.State?.Running
+      ? { ready: true }
+      : { ready: false, reason: 'health check timed out' }
   }
 
   /**
@@ -2159,7 +2228,10 @@ export class DockerService {
     // container and resurrect the stale one in its place.
     const staleOld = await this._findContainerByName(oldName)
     if (staleOld) {
-      await this.docker.getContainer(staleOld.Id).remove({ force: true }).catch(() => {})
+      await this.docker
+        .getContainer(staleOld.Id)
+        .remove({ force: true })
+        .catch(() => {})
     }
 
     try {
@@ -2210,7 +2282,10 @@ export class DockerService {
       this.invalidateServicesStatusCache()
       return { success: true, message: `Service ${serviceName} reconfigured successfully` }
     } catch (error: any) {
-      logger.error({ err: error }, `[DockerService] recreateCustomAppContainer failed for ${serviceName}`)
+      logger.error(
+        { err: error },
+        `[DockerService] recreateCustomAppContainer failed for ${serviceName}`
+      )
       // Roll back: discard the failed new container and restore the renamed original.
       try {
         const failedNew = await this._findContainerByName(serviceName)
