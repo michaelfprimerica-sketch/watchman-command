@@ -9,6 +9,14 @@ import { createWriteStream } from 'fs'
 import { rename } from 'fs/promises'
 import path from 'path'
 
+// Some upstream mirrors reject requests with a missing or generic User-Agent.
+// In particular, download.kiwix.org routes large Wikimedia-family ZIMs to
+// dumps.wikimedia.org, which rejects axios's default identifier.
+const DOWNLOAD_HEADERS: Record<string, string> = {
+  'User-Agent':
+    'WatchmanCommand/1.0 (+https://github.com/michaelfprimerica-sketch/watchman-command)',
+}
+
 /**
  * Perform a resumable download with progress tracking
  * @param param0 - Download parameters. Leave allowedMimeTypes empty to skip mime type checking.
@@ -45,6 +53,7 @@ export async function doResumableDownload({
   const headResponse = await axios.head(url, {
     signal,
     timeout,
+    headers: DOWNLOAD_HEADERS,
   })
 
   // Some upstream hosts (notably download.kiwix.org for .zim files) don't set a
@@ -94,7 +103,12 @@ export async function doResumableDownload({
   }
 
   const fetchStream = (hdrs: Record<string, string>) =>
-    axios.get(url, { responseType: 'stream', headers: hdrs, signal, timeout })
+    axios.get(url, {
+      responseType: 'stream',
+      headers: { ...DOWNLOAD_HEADERS, ...hdrs },
+      signal,
+      timeout,
+    })
 
   let response = await fetchStream(headers)
 
