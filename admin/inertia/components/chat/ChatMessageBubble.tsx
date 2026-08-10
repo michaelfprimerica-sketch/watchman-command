@@ -12,31 +12,24 @@ export default function ChatMessageBubble({ message }: ChatMessageBubbleProps) {
     <div
       className={classNames(
         'max-w-[70%] rounded-lg px-4 py-3',
-        message.role === 'user' ? 'bg-desert-green text-white' : 'bg-surface-secondary text-text-primary'
+        message.role === 'user'
+          ? 'bg-desert-green text-white'
+          : 'bg-surface-secondary text-text-primary'
       )}
     >
-      {message.isThinking && message.thinking && (
-        <div className="mb-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs">
-          <div className="mb-1 flex items-center gap-1.5 font-medium text-amber-700">
-            <span>Reasoning</span>
-            <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse inline-block" />
-          </div>
-          <div className="prose prose-xs max-w-none text-amber-900/80 max-h-32 overflow-y-auto">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.thinking}</ReactMarkdown>
-          </div>
+      {message.reasoningStatus && (
+        <div
+          className="mb-3 inline-flex items-center gap-2 rounded border border-border-subtle bg-surface-primary px-3 py-2 text-xs font-medium text-text-muted"
+          role="status"
+          aria-live="polite"
+        >
+          <span
+            className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-desert-green"
+            aria-hidden="true"
+          />
+          {message.reasoningStatus}
+          <span className="sr-only">Reasoning details are hidden.</span>
         </div>
-      )}
-      {!message.isThinking && message.thinking && (
-        <details className="mb-3 rounded border border-border-subtle bg-surface-secondary text-xs">
-          <summary className="cursor-pointer px-3 py-2 font-medium text-text-muted hover:text-text-primary select-none">
-            {message.thinkingDuration !== undefined
-              ? `Thought for ${message.thinkingDuration}s`
-              : 'Reasoning'}
-          </summary>
-          <div className="px-3 pb-3 prose prose-xs max-w-none text-text-secondary max-h-48 overflow-y-auto border-t border-border-subtle pt-2">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.thinking}</ReactMarkdown>
-          </div>
-        </details>
       )}
       <div
         className={classNames(

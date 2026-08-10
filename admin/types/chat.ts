@@ -4,9 +4,8 @@ export interface ChatMessage {
   content: string
   timestamp: Date
   isStreaming?: boolean
-  thinking?: string
-  isThinking?: boolean
-  thinkingDuration?: number
+  /** Safe activity label only; never contains model reasoning text. */
+  reasoningStatus?: 'Analyzing…' | 'Searching local knowledge…'
 }
 
 export interface ChatSession {

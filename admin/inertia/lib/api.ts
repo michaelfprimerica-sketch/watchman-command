@@ -348,7 +348,7 @@ class API {
 
   async streamChatMessage(
     chatRequest: OllamaChatRequest,
-    onChunk: (content: string, thinking: string, done: boolean) => void,
+    onChunk: (content: string, reasoningActive: boolean, done: boolean) => void,
     signal?: AbortSignal
   ): Promise<void> {
     // Axios doesn't support ReadableStream in browser, so need to use fetch
@@ -387,7 +387,11 @@ class API {
 
           if (data.error) throw new Error('The model encountered an error. Please try again.')
 
-          onChunk(data.message?.content ?? '', data.message?.thinking ?? '', data.done ?? false)
+          onChunk(
+            data.message?.content ?? '',
+            data.message?.reasoningActive === true,
+            data.done ?? false
+          )
         }
       }
     } finally {
@@ -803,18 +807,17 @@ class API {
 
   async listMapMarkers() {
     return catchInternal(async () => {
-      const response =
-        await this.client.get<
-          Array<{
-            id: number
-            name: string
-            longitude: number
-            latitude: number
-            color: string
-            notes: string | null
-            created_at: string
-          }>
-        >('/maps/markers')
+      const response = await this.client.get<
+        Array<{
+          id: number
+          name: string
+          longitude: number
+          latitude: number
+          color: string
+          notes: string | null
+          created_at: string
+        }>
+      >('/maps/markers')
       return response.data
     })()
   }

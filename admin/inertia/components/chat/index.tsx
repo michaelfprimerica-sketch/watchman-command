@@ -331,10 +331,6 @@ export default function Chat({
         const assistantMsgId = `msg-${Date.now()}-assistant`
         let isFirstChunk = true
         let fullContent = ''
-        let thinkingContent = ''
-        let isThinkingPhase = true
-        let thinkingStartTime: number | null = null
-        let thinkingDuration: number | null = null
 
         try {
           await api.streamChatMessage(
@@ -345,10 +341,12 @@ export default function Chat({
               sessionId: sessionId ? Number(sessionId) : undefined,
               collection: selectedCollection || undefined,
             },
-            (chunkContent, chunkThinking, done) => {
-              if (chunkThinking.length > 0 && thinkingStartTime === null) {
-                thinkingStartTime = Date.now()
-              }
+            (chunkContent, reasoningActive, done) => {
+              const reasoningStatus = reasoningActive
+                ? selectedCollection
+                  ? 'Searching local knowledge…'
+                  : 'Analyzing…'
+                : undefined
               if (isFirstChunk) {
                 isFirstChunk = false
                 setIsStreamingResponse(false)
@@ -358,40 +356,26 @@ export default function Chat({
                     id: assistantMsgId,
                     role: 'assistant',
                     content: chunkContent,
-                    thinking: chunkThinking,
                     timestamp: new Date(),
                     isStreaming: true,
-                    isThinking: chunkThinking.length > 0 && chunkContent.length === 0,
-                    thinkingDuration: undefined,
+                    reasoningStatus: chunkContent.length > 0 ? undefined : reasoningStatus,
                   },
                 ])
               } else {
-                if (isThinkingPhase && chunkContent.length > 0) {
-                  isThinkingPhase = false
-                  if (thinkingStartTime !== null) {
-                    thinkingDuration = Math.max(
-                      1,
-                      Math.round((Date.now() - thinkingStartTime) / 1000)
-                    )
-                  }
-                }
                 setMessages((prev) =>
                   prev.map((m) =>
                     m.id === assistantMsgId
                       ? {
                           ...m,
                           content: m.content + chunkContent,
-                          thinking: (m.thinking ?? '') + chunkThinking,
                           isStreaming: !done,
-                          isThinking: isThinkingPhase,
-                          thinkingDuration: thinkingDuration ?? undefined,
+                          reasoningStatus: chunkContent.length > 0 ? undefined : reasoningStatus,
                         }
                       : m
                   )
                 )
               }
               fullContent += chunkContent
-              thinkingContent += chunkThinking
             },
             abortController.signal
           )
@@ -564,6 +548,7 @@ export default function Chat({
             chatSuggestionsEnabled={suggestionsEnabled}
             chatSuggestionsLoading={chatSuggestionsLoading}
             rewriteModelAvailable={rewriteModelAvailable}
+            loadingLabel={selectedCollection ? 'Searching local knowledge…' : 'Analyzing…'}
           />
         </div>
       </div>
