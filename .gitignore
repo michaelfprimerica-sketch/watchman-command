@@ -41,3 +41,12 @@ admin/public/assets
 
 # Admin specific development files
 admin/storage
+
+# Watchman Command runtime data (databases, downloaded content/models/maps,
+# caches, process state, credentials, and generated indexes). Keep templates
+# and source configuration outside this runtime-only tree.
+/storage/
+
+# Generated locally by install/start_nomad.sh; contains application and
+# database secrets and must never be committed.
+/install/.watchman-command.env
