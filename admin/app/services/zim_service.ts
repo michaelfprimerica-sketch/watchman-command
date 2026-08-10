@@ -35,6 +35,7 @@ import type { CategoryWithStatus } from '../../types/collections.js'
 import CustomLibrarySource from '#models/custom_library_source'
 import { assertNotPrivateUrl } from '#validators/common'
 import { resolveZimDownload } from '../utils/zim_download_resolution.js'
+import { resolveZimDownloadTarget } from '../utils/zim_download_target.js'
 
 const ZIM_MIME_TYPES = ['application/x-zim', 'application/x-openzim', 'application/octet-stream']
 const WIKIPEDIA_OPTIONS_URL = 'https://raw.githubusercontent.com/Crosstalk-Solutions/project-nomad/refs/heads/main/collections/wikipedia.json'
@@ -189,23 +190,15 @@ export class ZimService {
   }
 
   async downloadRemote(url: string, metadata?: { title?: string; summary?: string; author?: string; size_bytes?: number }): Promise<{ filename: string; jobId?: string }> {
-    const parsed = new URL(url)
-    if (!parsed.pathname.endsWith('.zim')) {
-      throw new Error(`Invalid ZIM file URL: ${url}. URL must end with .zim`)
-    }
+    const { filename, filepath } = resolveZimDownloadTarget(
+      url,
+      join(process.cwd(), ZIM_STORAGE_PATH)
+    )
 
     const existing = await RunDownloadJob.getActiveByUrl(url)
     if (existing) {
       throw new Error('A download for this URL is already in progress')
     }
-
-    // Extract the filename from the URL
-    const filename = url.split('/').pop()
-    if (!filename) {
-      throw new Error('Could not determine filename from URL')
-    }
-
-    const filepath = join(process.cwd(), ZIM_STORAGE_PATH, filename)
 
     // Parse resource metadata for the download job
     const parsedFilename = CollectionManifestService.parseZimFilename(filename)
