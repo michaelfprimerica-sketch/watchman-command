@@ -3,11 +3,67 @@ import {
   DoResumableDownloadWithRetryParams,
 } from '../../types/downloads.js'
 import axios from 'axios'
-import { Transform } from 'stream'
+import { Transform } from 'node:stream'
 import { deleteFileIfExists, ensureDirectoryExists, getFileStatsIfExists } from './fs.js'
-import { createWriteStream } from 'fs'
-import { rename } from 'fs/promises'
-import path from 'path'
+import { createWriteStream } from 'node:fs'
+import { rename } from 'node:fs/promises'
+import path from 'node:path'
+
+// Some upstream mirrors reject requests with a missing or generic User-Agent.
+// In particular, download.kiwix.org routes large Wikimedia-family ZIMs to
+// dumps.wikimedia.org, which rejects axios's default identifier.
+const DOWNLOAD_HEADERS: Record<string, string> = {
+  'User-Agent':
+    'WatchmanCommand/1.0 (+https://github.com/michaelfprimerica-sketch/watchman-command)',
+}
+
+/** A remote source permanently rejected this installation's authorization. */
+export class PermanentDownloadAuthError extends Error {
+  constructor(status: number) {
+    super(`Download authorization was rejected by the server (HTTP ${status}).`)
+    this.name = 'PermanentDownloadAuthError'
+  }
+}
+
+export function classifyPermanentDownloadError(error: any): PermanentDownloadAuthError | null {
+  const status = error?.response?.status
+  if (status === 401 || status === 403) {
+    return new PermanentDownloadAuthError(status)
+  }
+  return null
+}
+
+function rethrowPermanentDownloadError(error: any): never {
+  const permanentError = classifyPermanentDownloadError(error)
+  if (permanentError) throw permanentError
+  throw error
+}
+
+interface ParsedContentRange {
+  start: number
+  end: number
+  total: number | null
+}
+
+function responseHeader(headers: any, name: string): string | undefined {
+  const value =
+    typeof headers?.get === 'function'
+      ? headers.get(name)
+      : (headers?.[name] ?? headers?.[name.toLowerCase()])
+  return value === undefined || value === null ? undefined : String(value)
+}
+
+function parseContentRange(value: string | undefined): ParsedContentRange | null {
+  const match = value?.match(/^bytes (\d+)-(\d+)\/(\d+|\*)$/i)
+  if (!match) return null
+
+  const start = Number(match[1])
+  const end = Number(match[2])
+  const total = match[3] === '*' ? null : Number(match[3])
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || end < start) return null
+  if (total !== null && (!Number.isSafeInteger(total) || total <= end)) return null
+  return { start, end, total }
+}
 
 /**
  * Perform a resumable download with progress tracking
@@ -42,10 +98,13 @@ export async function doResumableDownload({
   }
 
   // Get file info with HEAD request first
-  const headResponse = await axios.head(url, {
-    signal,
-    timeout,
-  })
+  const headResponse = await axios
+    .head(url, {
+      signal,
+      timeout,
+      headers: DOWNLOAD_HEADERS,
+    })
+    .catch(rethrowPermanentDownloadError)
 
   // Some upstream hosts (notably download.kiwix.org for .zim files) don't set a
   // Content-Type header at all. Per RFC 7231 §3.1.1.5, "if no Content-Type is
@@ -53,9 +112,12 @@ export async function doResumableDownload({
   // already in every binary-content allowlist we use (ZIM, PMTILES, base assets).
   // Without this default, the validator below throws `MIME type  is not allowed`
   // and breaks all downloads from kiwix's primary host (#848).
-  const contentType =
-    headResponse.headers['content-type']?.toString() || 'application/octet-stream'
-  const totalBytes = parseInt(headResponse.headers['content-length']?.toString() || '0', 10)
+  const contentType = headResponse.headers['content-type']?.toString() || 'application/octet-stream'
+  const advertisedTotalBytes = Number.parseInt(
+    headResponse.headers['content-length']?.toString() || '0',
+    10
+  )
+  let totalBytes = Number.isSafeInteger(advertisedTotalBytes) ? advertisedTotalBytes : 0
   const supportsRangeRequests = headResponse.headers['accept-ranges'] === 'bytes'
 
   // If allowedMimeTypes is provided, check content type
@@ -69,6 +131,9 @@ export async function doResumableDownload({
   // If final file already exists at correct size, return early (idempotent)
   const finalFileStats = await getFileStatsIfExists(filepath)
   if (finalFileStats && Number(finalFileStats.size) === totalBytes && totalBytes > 0 && !forceNew) {
+    if (onComplete) {
+      await onComplete(url, filepath)
+    }
     return filepath
   }
 
@@ -88,13 +153,29 @@ export async function doResumableDownload({
     appendMode = false
   }
 
+  // A publisher may replace a file in place. A larger partial cannot be a
+  // prefix of the newly advertised object and would otherwise cause a 416 on
+  // every retry, so discard only that stale staging file and restart cleanly.
+  if (startByte > totalBytes && totalBytes > 0) {
+    await deleteFileIfExists(tempPath)
+    startByte = 0
+    appendMode = false
+  }
+
   const headers: Record<string, string> = {}
   if (supportsRangeRequests && startByte > 0) {
     headers.Range = `bytes=${startByte}-`
   }
 
   const fetchStream = (hdrs: Record<string, string>) =>
-    axios.get(url, { responseType: 'stream', headers: hdrs, signal, timeout })
+    axios
+      .get(url, {
+        responseType: 'stream',
+        headers: { ...DOWNLOAD_HEADERS, ...hdrs },
+        signal,
+        timeout,
+      })
+      .catch(rethrowPermanentDownloadError)
 
   let response = await fetchStream(headers)
 
@@ -102,9 +183,18 @@ export async function doResumableDownload({
     throw new Error(`Failed to download: HTTP ${response.status}`)
   }
 
-  // If we requested a range but the server returned 200 (ignored the Range header),
-  // appending would corrupt the .tmp file — delete it and restart from byte 0.
-  if (headers.Range && response.status === 200) {
+  const contentRangeMatches = (expectedStart: number): boolean => {
+    const range = parseContentRange(responseHeader(response.headers, 'content-range'))
+    if (!range || range.start !== expectedStart) return false
+    if (range.total !== null && totalBytes > 0 && range.total !== totalBytes) return false
+    if (range.total !== null && totalBytes <= 0) totalBytes = range.total
+    return true
+  }
+
+  // A resumed response is safe to append only when the server proves it started
+  // at the requested byte. If Range is ignored or malformed, discard that response
+  // and the stale staging file, then retry once from byte zero.
+  if (headers.Range && (response.status !== 206 || !contentRangeMatches(startByte))) {
     response.data.destroy()
     await deleteFileIfExists(tempPath)
     startByte = 0
@@ -114,6 +204,17 @@ export async function doResumableDownload({
     if (response.status !== 200 && response.status !== 206) {
       throw new Error(`Failed to download: HTTP ${response.status}`)
     }
+  }
+
+  // A server may return 206 even without a Range request. Accept it only when it
+  // starts at byte zero; otherwise the resulting local file could never be whole.
+  if (!headers.Range && response.status === 206 && !contentRangeMatches(0)) {
+    response.data.destroy()
+    throw new Error('Download server returned an invalid Content-Range response')
+  }
+
+  if (totalBytes <= 0 && response.status === 200) {
+    totalBytes = Number.parseInt(responseHeader(response.headers, 'content-length') || '0', 10)
   }
 
   return new Promise((resolve, reject) => {
@@ -170,6 +271,7 @@ export async function doResumableDownload({
 
     const cleanup = (error?: Error) => {
       clearStallTimer()
+      signal?.removeEventListener('abort', abortHandler)
       progressStream.destroy()
       response.data.destroy()
       writeStream.destroy()
@@ -182,13 +284,29 @@ export async function doResumableDownload({
     progressStream.on('error', cleanup)
     writeStream.on('error', cleanup)
 
-    signal?.addEventListener('abort', () => {
+    const abortHandler = () => {
       cleanup(new Error('Download aborted'))
-    })
+    }
+    if (signal?.aborted) {
+      abortHandler()
+      return
+    }
+    signal?.addEventListener('abort', abortHandler, { once: true })
 
     writeStream.on('finish', async () => {
       clearStallTimer()
+      signal?.removeEventListener('abort', abortHandler)
       try {
+        const stagedFileStats = await getFileStatsIfExists(tempPath)
+        if (stagedFileStats && totalBytes > 0 && Number(stagedFileStats.size) !== totalBytes) {
+          reject(
+            new Error(
+              `Downloaded size mismatch: expected ${totalBytes} bytes, received ${stagedFileStats.size}`
+            )
+          )
+          return
+        }
+
         // Atomically move the completed .tmp file to the final path
         await rename(tempPath, filepath)
       } catch (renameError) {
@@ -202,19 +320,23 @@ export async function doResumableDownload({
           return
         }
       }
-      if (onProgress) {
-        onProgress({
-          downloadedBytes,
-          totalBytes,
-          lastProgressTime: Date.now(),
-          lastDownloadedBytes: downloadedBytes,
-          url,
-        })
+      try {
+        if (onProgress) {
+          onProgress({
+            downloadedBytes,
+            totalBytes,
+            lastProgressTime: Date.now(),
+            lastDownloadedBytes: downloadedBytes,
+            url,
+          })
+        }
+        if (onComplete) {
+          await onComplete(url, filepath)
+        }
+        resolve(filepath)
+      } catch (completionError) {
+        reject(completionError)
       }
-      if (onComplete) {
-        await onComplete(url, filepath)
-      }
-      resolve(filepath)
     })
 
     // Start stall timer and pipe: response -> progressStream -> writeStream

@@ -6,8 +6,8 @@ import type { RunExtractPmtilesJobParams } from '#jobs/run_extract_pmtiles_job'
 import { DownloadModelJob } from '#jobs/download_model_job'
 import { DownloadJobWithProgress, DownloadProgressData } from '../../types/downloads.js'
 import type { Job, Queue } from 'bullmq'
-import { normalize } from 'path'
 import { deleteFileIfExists } from '../utils/fs.js'
+import { hasDownloadJobPayload, normalizeDownloadPath } from '../utils/download_job_records.js'
 import transmit from '@adonisjs/transmit/services/main'
 import { BROADCAST_CHANNELS } from '../../constants/broadcast.js'
 
@@ -46,7 +46,7 @@ export class DownloadService {
       ...active.map((j) => ({ job: j, state: 'active' as const })),
       ...delayed.map((j) => ({ job: j, state: 'delayed' as const })),
       ...failed.map((j) => ({ job: j, state: 'failed' as const })),
-    ]
+    ].filter(({ job }) => hasDownloadJobPayload(job))
   }
 
   async listDownloadJobs(filetype?: string): Promise<DownloadJobWithProgress[]> {
@@ -63,7 +63,7 @@ export class DownloadService {
         jobId: job.id!.toString(),
         url: job.data.url,
         progress: parsed.percent,
-        filepath: normalize(job.data.filepath),
+        filepath: normalizeDownloadPath(job.data.filepath),
         filetype: job.data.filetype,
         title: job.data.title || undefined,
         downloadedBytes: parsed.downloadedBytes,
@@ -80,7 +80,7 @@ export class DownloadService {
         jobId: job.id!.toString(),
         url: job.data.sourceUrl,
         progress: parsed.percent,
-        filepath: normalize(job.data.outputFilepath),
+        filepath: normalizeDownloadPath(job.data.outputFilepath),
         filetype: job.data.filetype || 'map',
         title: job.data.title || undefined,
         downloadedBytes: parsed.downloadedBytes,
@@ -135,6 +135,40 @@ export class DownloadService {
         return
       }
     }
+  }
+
+  async retryFailedJob(jobId: string): Promise<{ success: boolean; message: string }> {
+    for (const queueName of [RunDownloadJob.queue, DownloadModelJob.queue]) {
+      const queue = this.queueService.getQueue(queueName)
+      const job = await queue.getJob(jobId)
+
+      if (!job) continue
+
+      const state = await job.getState()
+      if (state !== 'failed') {
+        return { success: false, message: 'Only failed downloads can be retried.' }
+      }
+
+      if (queueName === DownloadModelJob.queue) {
+        const modelName = job.data?.modelName
+        if (!modelName) {
+          return { success: false, message: 'Cannot retry: model name not found in job data' }
+        }
+
+        await job.retry('failed')
+        return { success: true, message: `Retrying download for model ${modelName}` }
+      }
+
+      const params = job.data
+      if (!params?.url || !params.filepath) {
+        return { success: false, message: 'Cannot retry: missing URL or filepath in job data' }
+      }
+
+      await job.retry('failed')
+      return { success: true, message: `Retrying download for ${params.url}` }
+    }
+
+    return { success: false, message: 'Failed job not found. It may have already been dismissed.' }
   }
 
   async cancelJob(jobId: string): Promise<{ success: boolean; message: string }> {

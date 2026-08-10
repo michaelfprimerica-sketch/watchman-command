@@ -101,7 +101,8 @@ export class CollectionUpdateService {
       timeout: 30000,
       allowedMimeTypes:
         update.resource_type === 'zim' ? ZIM_MIME_TYPES : PMTILES_MIME_TYPES,
-      forceNew: true,
+      // Preserve partial ZIMs across retries; keep existing map overwrite semantics.
+      forceNew: update.resource_type !== 'zim',
       filetype: update.resource_type,
       title: update.resource_id,
       totalBytes: update.size_bytes,

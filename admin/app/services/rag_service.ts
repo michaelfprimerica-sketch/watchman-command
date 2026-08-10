@@ -27,6 +27,7 @@ import { ZIMExtractionService } from './zim_extraction_service.js'
 import { ZIM_BATCH_SIZE } from '../../constants/zim_extraction.js'
 import { EMBEDDING_MODEL_NAME } from '../../constants/ollama.js'
 import { ProcessAndEmbedFileResponse, ProcessZIMFileResponse, RAGResult, RerankedRAGResult } from '../../types/rag.js'
+import { QdrantIndexMemo } from '../utils/qdrant_index_memo.js'
 
 export type EmbedSingleFileFailureCode =
   | 'not_found'
@@ -44,6 +45,9 @@ export class RagService {
   private qdrantInitPromise: Promise<void> | null = null
   private embeddingModelVerified = false
   private resolvedEmbeddingModel: string | null = null
+  // Verified for this Qdrant process: collection exists and Watchman's current
+  // source/content_type payload indexes are present.
+  private payloadIndexMemo = new QdrantIndexMemo()
   public static UPLOADS_STORAGE_PATH = 'storage/kb_uploads'
   public static CONTENT_COLLECTION_NAME = 'nomad_knowledge_base'
   public static EMBEDDING_DIMENSION = 768 // Nomic Embed Text v1.5 dimension is 768
@@ -93,6 +97,7 @@ export class RagService {
     } catch {
       this.qdrant = null
       this.qdrantInitPromise = null
+      this.payloadIndexMemo.reset()
       return {
         online: false,
         message: 'Qdrant vector database is offline. Restart the AI Assistant service in Settings to restore the Knowledge Base.',
@@ -112,6 +117,8 @@ export class RagService {
   ) {
     try {
       await this._ensureDependencies()
+      if (this.payloadIndexMemo.has(collectionName)) return
+
       const collections = await this.qdrant!.getCollections()
       const collectionExists = collections.collections.some((col) => col.name === collectionName)
 
@@ -133,6 +140,9 @@ export class RagService {
         field_name: 'content_type',
         field_schema: 'keyword',
       })
+
+      // Cache only after creation and both existing index checks succeed.
+      this.payloadIndexMemo.markVerified(collectionName)
     } catch (error) {
       logger.error('Error ensuring Qdrant collection:', error)
       throw error
@@ -1970,6 +1980,10 @@ export class RagService {
         // Collection may not exist yet on a fresh install — log and continue.
         logger.warn(`[RAG] deleteCollection failed (may not exist): ${(err as Error).message}`)
       }
+
+      // The collection no longer exists. Force the existing schema/index
+      // checks to run when it is recreated below.
+      this.payloadIndexMemo.invalidate(RagService.CONTENT_COLLECTION_NAME)
 
       await this._ensureCollection(
         RagService.CONTENT_COLLECTION_NAME,

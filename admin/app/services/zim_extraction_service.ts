@@ -6,6 +6,7 @@ import { ExtractZIMChunkingStrategy, ExtractZIMContentOptions, ZIMContentChunk, 
 import { randomUUID } from 'node:crypto'
 import { access } from 'node:fs/promises'
 import { isValidZimFile } from '../utils/fs.js'
+import { extractStructuredContent } from '../utils/zim_html.js'
 
 export class ZIMExtractionService {
 
@@ -115,7 +116,7 @@ export class ZIMExtractionService {
                 let chunks: ZIMContentChunk[]
 
                 if (strategy === 'structured') {
-                    const structured = this.extractStructuredContent(html)
+          const structured = extractStructuredContent(html)
                     chunks = structured.sections.map(s => ({
                         text: s.text,
                         articleTitle,
@@ -208,76 +209,6 @@ export class ZIMExtractionService {
             logger.error('Error extracting text from HTML:', error)
             return null
         }
-    }
-
-    private extractStructuredContent(html: string) {
-        const $ = cheerio.load(html);
-
-        const title = $('h1').first().text().trim() || $('title').text().trim();
-
-        // Extract sections with their headings and heading levels
-        const sections: Array<{ heading: string; text: string; level: number }> = [];
-        let currentSection = { heading: 'Introduction', content: [] as string[], level: 2 };
-
-        // Walk the full DOM rather than only direct children of <body>. Modern ZIMs (Devdocs,
-        // Wikipedia, FreeCodeCamp, etc.) wrap article content in a container div, which under
-        // .children() would be a single non-heading/non-paragraph element and yield zero sections.
-        $('body').find('h2, h3, h4, p, ul, ol, dl, table').each((_, element) => {
-            const $el = $(element);
-            const tagName = element.tagName?.toLowerCase();
-
-            if (['h2', 'h3', 'h4'].includes(tagName)) {
-                // Save current section if it has content
-                if (currentSection.content.length > 0) {
-                    sections.push({
-                        heading: currentSection.heading,
-                        text: currentSection.content.join(' ').replace(/\s+/g, ' ').trim(),
-                        level: currentSection.level,
-                    });
-                }
-                // Start new section
-                const level = parseInt(tagName.substring(1)); // Extract number from h2, h3, h4
-                currentSection = {
-                    heading: $el.text().replace(/\[edit\]/gi, '').trim(),
-                    content: [],
-                    level,
-                };
-            } else if (['p', 'ul', 'ol', 'dl', 'table'].includes(tagName)) {
-                const text = $el.text().trim();
-                if (text.length > 0) {
-                    currentSection.content.push(text);
-                }
-            }
-        });
-
-        // Push the last section if it has content
-        if (currentSection.content.length > 0) {
-            sections.push({
-                heading: currentSection.heading,
-                text: currentSection.content.join(' ').replace(/\s+/g, ' ').trim(),
-                level: currentSection.level,
-            });
-        }
-
-        // Fallback: if the selector walk produced no sections but the body has meaningful
-        // text (unusual structure, minimal markup), emit one section with the full body text
-        // so the article still contributes to the knowledge base.
-        if (sections.length === 0) {
-            const bodyText = $('body').text().replace(/\s+/g, ' ').trim();
-            if (bodyText.length > 0) {
-                sections.push({
-                    heading: title || 'Content',
-                    text: bodyText,
-                    level: 2,
-                });
-            }
-        }
-
-        return {
-            title,
-            sections,
-            fullText: sections.map(s => `${s.heading}\n${s.text}`).join('\n\n'),
-        };
     }
 
     private hasStructuredHeadings(html: string): boolean {
