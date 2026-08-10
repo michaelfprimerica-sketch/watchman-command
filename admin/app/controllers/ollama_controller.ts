@@ -13,6 +13,7 @@ import { RAG_CONTEXT_LIMITS, SYSTEM_PROMPTS } from '../../constants/ollama.js'
 import { SERVICE_NAMES } from '../../constants/service_names.js'
 import logger from '@adonisjs/core/services/logger'
 import { abortOnClientClose } from '../utils/request_abort.js'
+import { InstructionPolicyService } from '#services/instruction_policy_service'
 type Message = { role: 'system' | 'user' | 'assistant'; content: string }
 
 @inject()
@@ -21,7 +22,8 @@ export default class OllamaController {
     private chatService: ChatService,
     private dockerService: DockerService,
     private ollamaService: OllamaService,
-    private ragService: RagService
+    private ragService: RagService,
+    private instructionPolicyService: InstructionPolicyService
   ) {}
 
   async availableModels({ request }: HttpContext) {
@@ -61,16 +63,14 @@ export default class OllamaController {
     }
 
     try {
-      // If there are no system messages in the chat inject system prompts
-      const hasSystemMessage = reqData.messages.some((msg) => msg.role === 'system')
-      if (!hasSystemMessage) {
-        const systemPrompt = {
-          role: 'system' as const,
-          content: SYSTEM_PROMPTS.default,
-        }
-        logger.debug('[OllamaController] Injecting system prompt')
-        reqData.messages.unshift(systemPrompt)
-      }
+      // API-supplied system messages are user preferences, not vendor policy.
+      // Remove their privileged role and re-inject them later at layer 4.
+      const userPreferences = reqData.messages
+        .filter((message) => message.role === 'system')
+        .map((message) => message.content)
+        .join('\n\n')
+      reqData.messages = reqData.messages.filter((message) => message.role !== 'system')
+      let ragContext: string | null = null
 
       // Query rewriting for better RAG retrieval with manageable context
       // Will return user's latest message if no rewriting is needed
@@ -123,17 +123,17 @@ export default class OllamaController {
             })
             .join('\n\n')
 
-          const systemMessage = {
-            role: 'system' as const,
-            content: SYSTEM_PROMPTS.rag_context(contextText),
-          }
-
-          // Insert system message at the beginning (after any existing system messages)
-          const firstNonSystemIndex = reqData.messages.findIndex((msg) => msg.role !== 'system')
-          const insertIndex = firstNonSystemIndex === -1 ? 0 : firstNonSystemIndex
-          reqData.messages.splice(insertIndex, 0, systemMessage)
+          ragContext = contextText
         }
       }
+
+      const policyMessages = await this.instructionPolicyService.compose({
+        // Mission context intentionally remains absent until Watchman has a
+        // real Mission authorization/data boundary.
+        userPreferences,
+        ragContext,
+      })
+      reqData.messages.unshift(...policyMessages)
 
       // If system messages are large (e.g. due to RAG context), request a context window big
       // enough to fit them. Ollama respects num_ctx per-request; LM Studio ignores it gracefully.
