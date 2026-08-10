@@ -12,6 +12,7 @@ import type { HttpContext } from '@adonisjs/core/http'
 import { RAG_CONTEXT_LIMITS, SYSTEM_PROMPTS } from '../../constants/ollama.js'
 import { SERVICE_NAMES } from '../../constants/service_names.js'
 import logger from '@adonisjs/core/services/logger'
+import { abortOnClientClose } from '../utils/request_abort.js'
 type Message = { role: 'system' | 'user' | 'assistant'; content: string }
 
 @inject()
@@ -149,17 +150,20 @@ export default class OllamaController {
         )
       }
 
-      // Check if the model supports "thinking" capability for enhanced response generation
-      // If gpt-oss model, it requires a text param for "think" https://docs.ollama.com/api/chat
+      // Reasoning generation is globally OFF unless an operator explicitly enables
+      // ai.autoThinking. Capability is still checked so unsupported backends never
+      // receive reasoning parameters. Raw reasoning is never returned to the UI.
       const thinkingCapability = await this.ollamaService.checkModelHasThinking(reqData.model)
-      const think: boolean | 'medium' = thinkingCapability
+      const autoThinkingSetting = await KVStore.getValue('ai.autoThinking')
+      const thinkingEnabled = thinkingCapability && autoThinkingSetting === true
+      const think: boolean | 'medium' = thinkingEnabled
         ? reqData.model.startsWith('gpt-oss')
           ? 'medium'
           : true
         : false
 
-      // Separate sessionId from the Ollama request payload — Ollama rejects unknown fields
-      const { sessionId, ...ollamaRequest } = reqData
+      // UI-only routing fields must never be forwarded to the model provider.
+      const { sessionId, collection: _collection, ...ollamaRequest } = reqData
 
       // Save user message to DB before streaming if sessionId provided
       let userContent: string | null = null
@@ -175,14 +179,28 @@ export default class OllamaController {
         logger.debug(
           `[OllamaController] Initiating streaming response for model: "${reqData.model}" with think: ${think}`
         )
-        // Headers already flushed above
-        const stream = await this.ollamaService.chatStream({ ...ollamaRequest, think, numCtx })
+        const clientLifetime = abortOnClientClose(response.response)
         let fullContent = ''
-        for await (const chunk of stream) {
-          if (chunk.message?.content) {
-            fullContent += chunk.message.content
+        try {
+          const stream = await this.ollamaService.chatStream({
+            ...ollamaRequest,
+            think,
+            thinkingCapable: thinkingCapability,
+            numCtx,
+            signal: clientLifetime.signal,
+          })
+          for await (const chunk of stream) {
+            if (chunk.message?.content) fullContent += chunk.message.content
+            response.response.write(`data: ${JSON.stringify(chunk)}\n\n`)
           }
-          response.response.write(`data: ${JSON.stringify(chunk)}\n\n`)
+        } catch (error) {
+          if (clientLifetime.signal.aborted) {
+            logger.debug('[OllamaController] Client disconnected; upstream generation aborted')
+            return
+          }
+          throw error
+        } finally {
+          clientLifetime.dispose()
         }
         response.response.end()
 
@@ -204,7 +222,12 @@ export default class OllamaController {
       }
 
       // Non-streaming (legacy) path
-      const result = await this.ollamaService.chat({ ...ollamaRequest, think, numCtx })
+      const result = await this.ollamaService.chat({
+        ...ollamaRequest,
+        think,
+        thinkingCapable: thinkingCapability,
+        numCtx,
+      })
 
       if (sessionId && result?.message?.content) {
         await this.chatService.addMessage(sessionId, 'assistant', result.message.content)
@@ -386,7 +409,11 @@ export default class OllamaController {
   }
 
   async installedModels({}: HttpContext) {
-    return await this.ollamaService.getModels()
+    const models = await this.ollamaService.getModels()
+    const capabilities = await Promise.all(
+      models.map((model) => this.ollamaService.checkModelHasThinking(model.name))
+    )
+    return models.map((model, index) => ({ ...model, thinking: capabilities[index] }))
   }
 
   /**
