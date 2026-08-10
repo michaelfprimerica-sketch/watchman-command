@@ -116,7 +116,7 @@ export class ZIMExtractionService {
                 let chunks: ZIMContentChunk[]
 
                 if (strategy === 'structured') {
-                    const structured = extractStructuredContent(html)
+          const structured = extractStructuredContent(html)
                     chunks = structured.sections.map(s => ({
                         text: s.text,
                         articleTitle,

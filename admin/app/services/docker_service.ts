@@ -2175,10 +2175,7 @@ export class DockerService {
         await this.pullImage(service.container_image)
       }
 
-      const recreateEnv = await this._withRuntimeAppSecrets(
-        serviceName,
-        containerConfig?.Env ?? []
-      )
+      const recreateEnv = await this._withRuntimeAppSecrets(serviceName, containerConfig?.Env ?? [])
 
       const newContainer = await this.docker.createContainer({
         Image: service.container_image,

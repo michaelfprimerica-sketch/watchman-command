@@ -839,7 +839,9 @@ class API {
     })()
   }
 
-  async cancelDownloadJob(jobId: string): Promise<{ success: boolean; message: string } | undefined> {
+  async cancelDownloadJob(
+    jobId: string
+  ): Promise<{ success: boolean; message: string } | undefined> {
     return catchInternal(async () => {
       const response = await this.client.post<{ success: boolean; message: string }>(
         `/downloads/jobs/${jobId}/cancel`
@@ -848,7 +850,9 @@ class API {
     })()
   }
 
-  async retryDownloadJob(jobId: string): Promise<{ success: boolean; message: string } | undefined> {
+  async retryDownloadJob(
+    jobId: string
+  ): Promise<{ success: boolean; message: string } | undefined> {
     return catchInternal(async () => {
       const response = await this.client.post<{ success: boolean; message: string }>(
         `/downloads/jobs/${jobId}/retry`

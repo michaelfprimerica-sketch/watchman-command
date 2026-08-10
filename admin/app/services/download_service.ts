@@ -4,10 +4,7 @@ import { RunDownloadJob } from '#jobs/run_download_job'
 import { RunExtractPmtilesJob } from '#jobs/run_extract_pmtiles_job'
 import type { RunExtractPmtilesJobParams } from '#jobs/run_extract_pmtiles_job'
 import { DownloadModelJob } from '#jobs/download_model_job'
-import {
-  DownloadJobWithProgress,
-  DownloadProgressData,
-} from '../../types/downloads.js'
+import { DownloadJobWithProgress, DownloadProgressData } from '../../types/downloads.js'
 import type { Job, Queue } from 'bullmq'
 import { deleteFileIfExists } from '../utils/fs.js'
 import { hasDownloadJobPayload, normalizeDownloadPath } from '../utils/download_job_records.js'
