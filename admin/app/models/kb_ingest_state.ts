@@ -29,6 +29,9 @@ export default class KbIngestState extends BaseModel {
   declare chunks_embedded: number
 
   @column()
+  declare collection: string | null
+
+  @column()
   declare last_error: string | null
 
   @column.dateTime({ autoCreate: true })
