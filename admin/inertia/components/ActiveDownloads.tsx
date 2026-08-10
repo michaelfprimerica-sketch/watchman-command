@@ -51,39 +51,36 @@ const ActiveDownloads = ({ filetype, withHeader = false }: ActiveDownloadProps) 
   const prevBytesRef = useRef<Map<string, { bytes: number; time: number }>>(new Map())
   const speedRef = useRef<Map<string, number[]>>(new Map())
 
-  const getSpeed = useCallback(
-    (jobId: string, currentBytes?: number): number => {
-      if (!currentBytes || currentBytes <= 0) return 0
+  const getSpeed = useCallback((jobId: string, currentBytes?: number): number => {
+    if (!currentBytes || currentBytes <= 0) return 0
 
-      const prev = prevBytesRef.current.get(jobId)
-      const now = Date.now()
+    const prev = prevBytesRef.current.get(jobId)
+    const now = Date.now()
 
-      if (prev && prev.bytes > 0 && currentBytes > prev.bytes) {
-        const deltaBytes = currentBytes - prev.bytes
-        const deltaSec = (now - prev.time) / 1000
-        if (deltaSec > 0) {
-          const instantSpeed = deltaBytes / deltaSec
+    if (prev && prev.bytes > 0 && currentBytes > prev.bytes) {
+      const deltaBytes = currentBytes - prev.bytes
+      const deltaSec = (now - prev.time) / 1000
+      if (deltaSec > 0) {
+        const instantSpeed = deltaBytes / deltaSec
 
-          // Simple moving average (last 5 samples)
-          const samples = speedRef.current.get(jobId) || []
-          samples.push(instantSpeed)
-          if (samples.length > 5) samples.shift()
-          speedRef.current.set(jobId, samples)
+        // Simple moving average (last 5 samples)
+        const samples = speedRef.current.get(jobId) || []
+        samples.push(instantSpeed)
+        if (samples.length > 5) samples.shift()
+        speedRef.current.set(jobId, samples)
 
-          const avg = samples.reduce((a, b) => a + b, 0) / samples.length
-          prevBytesRef.current.set(jobId, { bytes: currentBytes, time: now })
-          return avg
-        }
-      }
-
-      // Only set initial observation; never advance timestamp when bytes unchanged
-      if (!prev) {
+        const avg = samples.reduce((a, b) => a + b, 0) / samples.length
         prevBytesRef.current.set(jobId, { bytes: currentBytes, time: now })
+        return avg
       }
-      return speedRef.current.get(jobId)?.at(-1) || 0
-    },
-    []
-  )
+    }
+
+    // Only set initial observation; never advance timestamp when bytes unchanged
+    if (!prev) {
+      prevBytesRef.current.set(jobId, { bytes: currentBytes, time: now })
+    }
+    return speedRef.current.get(jobId)?.at(-1) || 0
+  }, [])
 
   const handleDismiss = async (jobId: string) => {
     await api.removeDownloadJob(jobId)

@@ -266,9 +266,8 @@ export default function ZimRemoteExplorer() {
         confirmVariant="primary"
       >
         <p className="text-text-primary">
-          Are you sure you want to download{' '}
-          <strong>{record.title}</strong>? It may take some time for it
-          to be available depending on the file size and your internet connection. The Kiwix
+          Are you sure you want to download <strong>{record.title}</strong>? It may take some time
+          for it to be available depending on the file size and your internet connection. The Kiwix
           application will be restarted after the download is complete.
         </p>
       </StyledModal>,
@@ -276,7 +275,11 @@ export default function ZimRemoteExplorer() {
     )
   }
 
-  async function confirmCustomDownload(file: { name: string; url: string; size_bytes: number | null }) {
+  async function confirmCustomDownload(file: {
+    name: string
+    url: string
+    size_bytes: number | null
+  }) {
     openModal(
       <StyledModal
         title="Confirm Download?"
@@ -291,10 +294,9 @@ export default function ZimRemoteExplorer() {
         confirmVariant="primary"
       >
         <p className="text-text-primary">
-          Are you sure you want to download{' '}
-          <strong>{file.name}</strong>
-          {file.size_bytes ? ` (${formatBytes(file.size_bytes)})` : ''}? The Kiwix
-          application will be restarted after the download is complete.
+          Are you sure you want to download <strong>{file.name}</strong>
+          {file.size_bytes ? ` (${formatBytes(file.size_bytes)})` : ''}? The Kiwix application will
+          be restarted after the download is complete.
         </p>
       </StyledModal>,
       'confirm-download-custom-modal'
@@ -315,7 +317,11 @@ export default function ZimRemoteExplorer() {
     }
   }
 
-  async function downloadCustomFile(file: { name: string; url: string; size_bytes: number | null }) {
+  async function downloadCustomFile(file: {
+    name: string
+    url: string
+    size_bytes: number | null
+  }) {
     try {
       await api.downloadRemoteZimFile(file.url, {
         title: file.name.replace(/\.zim$/, ''),
@@ -791,7 +797,10 @@ export default function ZimRemoteExplorer() {
               )}
 
               {!isBrowsing && !browseError && browseData && (
-                <div className="bg-surface-primary rounded-lg border border-border-subtle overflow-hidden relative" style={{ maxHeight: '600px', overflowY: 'auto' }}>
+                <div
+                  className="bg-surface-primary rounded-lg border border-border-subtle overflow-hidden relative"
+                  style={{ maxHeight: '600px', overflowY: 'auto' }}
+                >
                   {browseData.directories.length === 0 && browseData.files.length === 0 ? (
                     <p className="text-text-muted p-6 text-center">
                       No directories or ZIM files found at this location.
@@ -800,8 +809,12 @@ export default function ZimRemoteExplorer() {
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="border-b border-border-subtle bg-surface-secondary sticky top-0 z-10">
-                          <th className="text-left px-4 py-3 font-medium text-text-secondary">Name</th>
-                          <th className="text-right px-4 py-3 font-medium text-text-secondary w-32">Size</th>
+                          <th className="text-left px-4 py-3 font-medium text-text-secondary">
+                            Name
+                          </th>
+                          <th className="text-right px-4 py-3 font-medium text-text-secondary w-32">
+                            Size
+                          </th>
                           <th className="text-right px-4 py-3 font-medium text-text-secondary w-36"></th>
                         </tr>
                       </thead>
@@ -883,7 +896,9 @@ export default function ZimRemoteExplorer() {
                           <p className="font-medium text-text-primary truncate">
                             {lib.name}
                             {lib.is_default && (
-                              <span className="ml-2 text-xs text-text-muted font-normal">(built-in)</span>
+                              <span className="ml-2 text-xs text-text-muted font-normal">
+                                (built-in)
+                              </span>
                             )}
                           </p>
                           <p className="text-xs text-text-muted truncate">{lib.base_url}</p>
