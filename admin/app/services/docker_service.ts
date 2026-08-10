@@ -21,9 +21,11 @@ import { SERVICE_NAMES } from '../../constants/service_names.js'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import { readFile, mkdir, copyFile, chown, chmod, access, writeFile } from 'node:fs/promises'
+import { randomBytes } from 'node:crypto'
 import KVStore from '#models/kv_store'
 import { BROADCAST_CHANNELS } from '../../constants/broadcast.js'
 import { KIWIX_LIBRARY_CMD } from '../../constants/kiwix.js'
+import { findValidHomeboxPepper, withHomeboxPepper } from '../utils/homebox_env.js'
 
 @inject()
 export class DockerService {
@@ -810,6 +812,11 @@ export class DockerService {
         }
       }
 
+      const appEnv = await this._withRuntimeAppSecrets(
+        service.service_name,
+        containerConfig?.Env ?? []
+      )
+
       this._broadcast(
         service.service_name,
         'creating',
@@ -827,7 +834,7 @@ export class DockerService {
         HostConfig: gpuHostConfig,
         ...(containerConfig?.WorkingDir && { WorkingDir: containerConfig.WorkingDir }),
         ...(containerConfig?.ExposedPorts && { ExposedPorts: containerConfig.ExposedPorts }),
-        Env: [...(containerConfig?.Env ?? []), ...ollamaEnv],
+        Env: [...appEnv, ...ollamaEnv],
         ...(service.container_command ? { Cmd: service.container_command.split(' ') } : {}),
         // Ensure container is attached to the Nomad docker network in production
         ...(process.env.NODE_ENV === 'production' && {
@@ -1465,6 +1472,32 @@ export class DockerService {
    *
    * Returns null when no override should be applied.
    */
+  private async _resolveHomeboxPepper(candidate?: string | null): Promise<string> {
+    const stored = await KVStore.getValue('apps.homebox.apiKeyPepper')
+    if (typeof stored === 'string' && Buffer.byteLength(stored, 'utf8') >= 32) return stored
+
+    // Preserve a valid pepper already present in an existing container/config
+    // when upgrading an install that predates KV persistence.
+    if (candidate && Buffer.byteLength(candidate, 'utf8') >= 32) {
+      await KVStore.setValue('apps.homebox.apiKeyPepper', candidate)
+      return candidate
+    }
+
+    const pepper = randomBytes(48).toString('base64')
+    await KVStore.setValue('apps.homebox.apiKeyPepper', pepper)
+    logger.info('[DockerService] Generated and persisted Homebox API key pepper')
+    return pepper
+  }
+
+  private async _withRuntimeAppSecrets(
+    serviceName: string,
+    environmentEntries: string[]
+  ): Promise<string[]> {
+    if (serviceName !== SERVICE_NAMES.HOMEBOX) return environmentEntries
+    const pepper = await this._resolveHomeboxPepper(findValidHomeboxPepper(environmentEntries))
+    return withHomeboxPepper(environmentEntries, pepper)
+  }
+
   private async _resolveAmdHsaOverride(): Promise<string | null> {
     const manualRaw = await KVStore.getValue('ai.amdHsaOverride')
     if (manualRaw !== null && manualRaw !== undefined && String(manualRaw).trim() !== '') {
@@ -1693,6 +1726,7 @@ export class DockerService {
           finalEnv.push(`HSA_OVERRIDE_GFX_VERSION=${hsaOverride}`)
         }
       }
+      finalEnv = await this._withRuntimeAppSecrets(serviceName, finalEnv)
 
       const newContainerConfig: any = {
         Image: runtimeImage,
@@ -2141,6 +2175,11 @@ export class DockerService {
         await this.pullImage(service.container_image)
       }
 
+      const recreateEnv = await this._withRuntimeAppSecrets(
+        serviceName,
+        containerConfig?.Env ?? []
+      )
+
       const newContainer = await this.docker.createContainer({
         Image: service.container_image,
         name: serviceName,
@@ -2152,7 +2191,7 @@ export class DockerService {
         ...(containerConfig?.User && { User: containerConfig.User }),
         HostConfig: containerConfig?.HostConfig ?? {},
         ...(containerConfig?.ExposedPorts && { ExposedPorts: containerConfig.ExposedPorts }),
-        ...(containerConfig?.Env && { Env: containerConfig.Env }),
+        ...(recreateEnv.length ? { Env: recreateEnv } : {}),
         ...(service.container_command ? { Cmd: service.container_command.split(' ') } : {}),
         ...(process.env.NODE_ENV === 'production' && {
           NetworkingConfig: { EndpointsConfig: { [DockerService.NOMAD_NETWORK]: {} } },
