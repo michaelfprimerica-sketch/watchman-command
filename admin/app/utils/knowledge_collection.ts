@@ -1,4 +1,5 @@
 export const KNOWLEDGE_COLLECTION_MAX_LENGTH = 64
+export const KNOWLEDGE_COLLECTION_MAX_INPUT_LENGTH = 256
 
 /**
  * Normalize an untrusted generic Knowledge Collection name.
@@ -8,6 +9,9 @@ export const KNOWLEDGE_COLLECTION_MAX_LENGTH = 64
  */
 export function normalizeKnowledgeCollection(value: unknown): string | null {
   if (typeof value !== 'string') return null
+  if (Array.from(value).length > KNOWLEDGE_COLLECTION_MAX_INPUT_LENGTH) {
+    throw new RangeError('Collection name input is too long')
+  }
 
   const normalized = value.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLowerCase()
   if (normalized.length === 0) return null

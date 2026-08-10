@@ -3,6 +3,7 @@ import { createRequire } from 'node:module'
 import { describe, it } from 'node:test'
 import {
   KNOWLEDGE_COLLECTION_MAX_LENGTH,
+  KNOWLEDGE_COLLECTION_MAX_INPUT_LENGTH,
   normalizeKnowledgeCollection,
   resolveEffectiveCollection,
 } from '../../app/utils/knowledge_collection.js'
@@ -37,6 +38,13 @@ describe('Knowledge Collection normalization', () => {
     assert.throws(
       () => normalizeKnowledgeCollection('a'.repeat(KNOWLEDGE_COLLECTION_MAX_LENGTH + 1)),
       RangeError
+    )
+  })
+
+  it('rejects abusive raw input before Unicode normalization', () => {
+    assert.throws(
+      () => normalizeKnowledgeCollection(' '.repeat(KNOWLEDGE_COLLECTION_MAX_INPUT_LENGTH + 1)),
+      /input is too long/
     )
   })
 })

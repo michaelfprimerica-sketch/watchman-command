@@ -1,4 +1,5 @@
 import vine from '@vinejs/vine'
+import { KNOWLEDGE_COLLECTION_MAX_INPUT_LENGTH } from '../utils/knowledge_collection.js'
 
 export const getJobStatusSchema = vine.compile(
   vine.object({
@@ -42,19 +43,23 @@ export const estimateBatchSchema = vine.compile(
 export const updateFileCollectionSchema = vine.compile(
   vine.object({
     source: vine.string().minLength(1).maxLength(2048),
-    collection: vine.string().nullable().optional(),
+    collection: vine
+      .string()
+      .maxLength(KNOWLEDGE_COLLECTION_MAX_INPUT_LENGTH)
+      .nullable()
+      .optional(),
   })
 )
 
 export const renameKnowledgeCollectionSchema = vine.compile(
   vine.object({
-    oldName: vine.string(),
-    newName: vine.string(),
+    oldName: vine.string().maxLength(KNOWLEDGE_COLLECTION_MAX_INPUT_LENGTH),
+    newName: vine.string().maxLength(KNOWLEDGE_COLLECTION_MAX_INPUT_LENGTH),
   })
 )
 
 export const deleteKnowledgeCollectionSchema = vine.compile(
   vine.object({
-    name: vine.string(),
+    name: vine.string().maxLength(KNOWLEDGE_COLLECTION_MAX_INPUT_LENGTH),
   })
 )
