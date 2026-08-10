@@ -47,6 +47,7 @@ import {
   exactCollectionFilter,
   renameCollectionPayload,
 } from '../utils/knowledge_collection_qdrant.js'
+import { extractDocxText } from '../utils/docx_extractor.js'
 
 export type EmbedSingleFileFailureCode =
   | 'not_found'
@@ -646,6 +647,10 @@ export class RagService {
     return await this.extractTXTText(fileBuffer)
   }
 
+  private async processDocxFile(fileBuffer: Buffer): Promise<string> {
+    return extractDocxText(fileBuffer)
+  }
+
   /**
    * Extract text content from an EPUB file.
    * EPUBs are ZIP archives containing XHTML content files.
@@ -812,6 +817,9 @@ export class RagService {
           break
         case 'pdf':
           extractedText = await this.processPDFFile(fileBuffer!)
+          break
+        case 'docx':
+          extractedText = await this.processDocxFile(fileBuffer!)
           break
         case 'epub':
           extractedText = await this.processEPUBFile(fileBuffer!)
