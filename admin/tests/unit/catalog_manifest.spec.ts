@@ -60,4 +60,16 @@ describe('curated catalog manifests', () => {
     }
     assert.equal(byId.has('cd3wd_en_all'), false)
   })
+
+  it('contains no duplicate resource or Wikipedia option IDs', async () => {
+    const categories = await readCollection('kiwix-categories.json')
+    const wikipedia = await readCollection('wikipedia.json')
+    const resourceIds = categories.categories.flatMap((category: any) =>
+      category.tiers.flatMap((tier: any) => tier.resources.map((resource: any) => resource.id))
+    )
+    const wikipediaIds = wikipedia.options.map((option: any) => option.id)
+
+    assert.equal(new Set(resourceIds).size, resourceIds.length)
+    assert.equal(new Set(wikipediaIds).size, wikipediaIds.length)
+  })
 })
