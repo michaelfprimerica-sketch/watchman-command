@@ -19,11 +19,7 @@ const ZIM_PREFIX = '/app/storage/zim/'
 const UPLOADS_PREFIX = '/app/storage/kb_uploads/'
 
 export function classifyKbFile(source: string): KbFileBucket {
-  if (
-    ADMIN_DOCS_PREFIXES.some((p) =>
-      p.endsWith('/') ? source.startsWith(p) : source === p
-    )
-  ) {
+  if (ADMIN_DOCS_PREFIXES.some((p) => (p.endsWith('/') ? source.startsWith(p) : source === p))) {
     return 'admin_docs'
   }
   if (source.startsWith(ZIM_PREFIX)) return 'zim'
@@ -61,6 +57,8 @@ export interface KbFileGroup {
   /** True when the row corresponds to a user upload — drives whether the
    * view/download buttons render. False for the collapsed admin_docs group. */
   isUserUpload: boolean
+  /** Generic Knowledge Collection shared by all members; null when unassigned. */
+  collection: string | null
 }
 
 const BUCKET_SORT_ORDER: KbFileBucket[] = ['zim', 'upload', 'admin_docs', 'other']
@@ -77,8 +75,10 @@ const DEFAULT_SORT: KbFileSort = { key: 'name', direction: 'asc' }
 function compareForSort(a: StoredFileInfo, b: StoredFileInfo, sort: KbFileSort): number {
   // Files the scanner couldn't stat sort to the end regardless of direction so
   // they don't pollute the top of size/uploaded-at views.
-  const aMissing = sort.key !== 'name' && (sort.key === 'size' ? a.size === null : a.uploadedAt === null)
-  const bMissing = sort.key !== 'name' && (sort.key === 'size' ? b.size === null : b.uploadedAt === null)
+  const aMissing =
+    sort.key !== 'name' && (sort.key === 'size' ? a.size === null : a.uploadedAt === null)
+  const bMissing =
+    sort.key !== 'name' && (sort.key === 'size' ? b.size === null : b.uploadedAt === null)
   if (aMissing && !bMissing) return 1
   if (!aMissing && bMissing) return -1
 
@@ -136,6 +136,7 @@ export function groupAndSortKbFiles(
         size: null,
         uploadedAt: null,
         isUserUpload: false,
+        collection: null,
       })
       continue
     }
@@ -152,6 +153,7 @@ export function groupAndSortKbFiles(
         size: file.size,
         uploadedAt: file.uploadedAt,
         isUserUpload: file.isUserUpload,
+        collection: file.collection,
       })
     }
   }
