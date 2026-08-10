@@ -5,6 +5,8 @@ import {
   DocxExtractionError,
   extractDocxText,
   MAX_DOCX_BYTES,
+  MAX_DOCX_UNCOMPRESSED_BYTES,
+  validateDocxArchive,
 } from '../../app/utils/docx_extractor.js'
 import { determineFileType } from '../../app/utils/fs.js'
 
@@ -40,7 +42,10 @@ describe('safe DOCX extraction', () => {
   it('rejects empty, oversized, corrupt, and password-protected containers', async () => {
     await assert.rejects(extractDocxText(Buffer.alloc(0)), DocxExtractionError)
     await assert.rejects(extractDocxText(Buffer.alloc(MAX_DOCX_BYTES + 1)), /exceeds the 25 MiB/)
-    await assert.rejects(extractDocxText(Buffer.from('PK-not-a-zip')), /corrupt or unsupported/)
+    await assert.rejects(
+      extractDocxText(Buffer.from('PK-not-a-zip')),
+      /central directory is missing/
+    )
     await assert.rejects(
       extractDocxText(Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0, 0, 0, 0])),
       /Password-protected/
@@ -50,5 +55,19 @@ describe('safe DOCX extraction', () => {
   it('rejects a structurally valid but text-empty DOCX', async () => {
     const file = await makeDocx('<w:p><w:r><w:t></w:t></w:r></w:p>')
     await assert.rejects(extractDocxText(file), /no extractable text/)
+  })
+
+  it('rejects encrypted and excessive expanded-size metadata before inflation', async () => {
+    const valid = await makeDocx('<w:p><w:r><w:t>Safe</w:t></w:r></w:p>')
+    const centralOffset = valid.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]))
+    assert.ok(centralOffset >= 0)
+
+    const encrypted = Buffer.from(valid)
+    encrypted.writeUInt16LE(encrypted.readUInt16LE(centralOffset + 8) | 0x1, centralOffset + 8)
+    assert.throws(() => validateDocxArchive(encrypted), /Encrypted or password-protected/)
+
+    const expanded = Buffer.from(valid)
+    expanded.writeUInt32LE(MAX_DOCX_UNCOMPRESSED_BYTES + 1, centralOffset + 24)
+    assert.throws(() => validateDocxArchive(expanded), /expanded content exceeds/)
   })
 })

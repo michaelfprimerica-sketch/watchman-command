@@ -46,6 +46,7 @@ import {
   ensureKnowledgePayloadIndexes,
   exactCollectionFilter,
   renameCollectionPayload,
+  sourceHasEmbeddedPoints,
 } from '../utils/knowledge_collection_qdrant.js'
 import { extractDocxText } from '../utils/docx_extractor.js'
 
@@ -1297,6 +1298,12 @@ export class RagService {
           RagService.CONTENT_COLLECTION_NAME,
           RagService.EMBEDDING_DIMENSION
         )
+        if (
+          !row &&
+          !(await sourceHasEmbeddedPoints(this.qdrant!, RagService.CONTENT_COLLECTION_NAME, source))
+        ) {
+          return { success: false, message: 'Knowledge source was not found.' }
+        }
         await assignCollectionPayload(
           this.qdrant!,
           RagService.CONTENT_COLLECTION_NAME,

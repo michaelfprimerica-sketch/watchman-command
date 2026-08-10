@@ -5,6 +5,7 @@ import {
   ensureKnowledgePayloadIndexes,
   exactCollectionFilter,
   renameCollectionPayload,
+  sourceHasEmbeddedPoints,
 } from '../../app/utils/knowledge_collection_qdrant.js'
 import { QdrantIndexMemo } from '../../app/utils/qdrant_index_memo.js'
 
@@ -63,6 +64,25 @@ describe('Knowledge Collection Qdrant contract', () => {
       assignCollectionPayload(unavailable, 'knowledge', '/data/guide.zim', 'reference'),
       /connection refused/
     )
+  })
+
+  it('requires an exact existing source before a legacy Qdrant-only row can be persisted', async () => {
+    const requests: unknown[] = []
+    const client = {
+      async count(collectionName: string, request: unknown) {
+        requests.push({ collectionName, request })
+        return { count: collectionName === 'knowledge' ? 1 : 0 }
+      },
+    }
+    assert.equal(await sourceHasEmbeddedPoints(client, 'knowledge', '/data/known.zim'), true)
+    assert.equal(await sourceHasEmbeddedPoints(client, 'missing', '/data/unknown.zim'), false)
+    assert.deepEqual(requests[0], {
+      collectionName: 'knowledge',
+      request: {
+        filter: { must: [{ key: 'source', match: { value: '/data/known.zim' } }] },
+        exact: true,
+      },
+    })
   })
 
   it('does not memoize partial payload-index creation and retries cleanly', async () => {

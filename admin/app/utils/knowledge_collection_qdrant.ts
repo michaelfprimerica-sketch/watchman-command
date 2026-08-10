@@ -18,6 +18,13 @@ export interface PayloadIndexClient {
   ): Promise<unknown>
 }
 
+export interface PointCountClient {
+  count(
+    collectionName: string,
+    request: { filter: ExactMatchFilter; exact: true }
+  ): Promise<{ count: number }>
+}
+
 export const KNOWLEDGE_PAYLOAD_INDEXES = ['source', 'content_type', 'collection'] as const
 
 export async function ensureKnowledgePayloadIndexes(
@@ -54,6 +61,18 @@ export async function assignCollectionPayload(
     payload: { collection },
     filter: exactSourceFilter(source),
   })
+}
+
+export async function sourceHasEmbeddedPoints(
+  client: PointCountClient,
+  qdrantCollection: string,
+  source: string
+): Promise<boolean> {
+  const result = await client.count(qdrantCollection, {
+    filter: exactSourceFilter(source),
+    exact: true,
+  })
+  return result.count > 0
 }
 
 export async function renameCollectionPayload(
