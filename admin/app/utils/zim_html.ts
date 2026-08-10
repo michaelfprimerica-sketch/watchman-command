@@ -81,7 +81,12 @@ export function extractStructuredContent(html: string): StructuredContent {
       if (['h2', 'h3', 'h4'].includes(tagName)) {
         // Save the section we just finished, then open the next one.
         flushSection()
-        const heading = $el
+        // Malformed archived pages sometimes leave a <p> or another block nested
+        // inside a heading. Exclude those descendants so their article text cannot
+        // disguise a boilerplate heading such as "References" from the filter.
+        const headingElement = $el.clone()
+        headingElement.find('p, ul, ol, dl, table, h2, h3, h4').remove()
+        const heading = headingElement
           .text()
           .replace(/\[edit\]/gi, '')
           .trim()

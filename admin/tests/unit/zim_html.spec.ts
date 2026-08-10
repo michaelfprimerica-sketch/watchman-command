@@ -97,3 +97,40 @@ test('extractStructuredContent keeps table structure inside a content section', 
   assert.match(dosage.text, /Age \| Dose/)
   assert.match(dosage.text, /Adult \| 500 mg/)
 })
+
+test('extractStructuredContent tolerates malformed markup and decodes entities', () => {
+  const html = `<body><h1>Field &amp; Guide</h1><h2>Uses<p>Salt&nbsp;&amp;&nbsp;water<h2>References<p>omit me`
+  const { title, sections, fullText } = extractStructuredContent(html)
+
+  assert.equal(title, 'Field & Guide')
+  assert.match(fullText, /Salt\s*&\s*water/)
+  assert.equal(
+    sections.some((section) => /omit me/.test(section.text)),
+    false
+  )
+})
+
+test('extractStructuredContent ignores scripts and handles empty bodies', () => {
+  const scripted = extractStructuredContent(
+    '<body><script>secretRuntimeValue()</script><h2>Overview</h2><p>Useful text</p></body>'
+  )
+  assert.match(scripted.fullText, /Useful text/)
+  assert.doesNotMatch(scripted.fullText, /secretRuntimeValue/)
+
+  const empty = extractStructuredContent('<html><body>   </body></html>')
+  assert.deepEqual(empty.sections, [])
+  assert.equal(empty.fullText, '')
+})
+
+test('tableToText preserves delimiters for a large table', () => {
+  const rows = Array.from(
+    { length: 1_000 },
+    (_, index) => `<tr><td>Row ${index}</td><td>Value ${index}</td></tr>`
+  ).join('')
+  const $ = cheerio.load(`<table>${rows}</table>`)
+  const output = tableToText($, $('table').get(0))
+
+  assert.match(output, /^Row 0 \| Value 0/)
+  assert.match(output, /Row 999 \| Value 999$/)
+  assert.equal(output.split('\n').length, 1_000)
+})
