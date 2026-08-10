@@ -72,3 +72,17 @@ export class SafeReasoningStreamNormalizer {
     return 0
   }
 }
+
+/** Apply the stream privacy rules to a complete non-streaming response. */
+export function normalizeCompleteReasoning(
+  rawContent: string,
+  nativeMessage?: unknown
+): SafeReasoningChunk {
+  const normalizer = new SafeReasoningStreamNormalizer()
+  const normalized = normalizer.push(rawContent, nativeMessage)
+  const trailing = normalizer.finish()
+  return {
+    content: normalized.content + trailing.content,
+    reasoningActive: normalized.reasoningActive || trailing.reasoningActive,
+  }
+}

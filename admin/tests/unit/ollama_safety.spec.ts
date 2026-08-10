@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { describe, it } from 'node:test'
 import {
   hasNativeReasoning,
+  normalizeCompleteReasoning,
   SafeReasoningStreamNormalizer,
 } from '../../app/utils/reasoning_privacy.js'
 import { abortOnClientClose } from '../../app/utils/request_abort.js'
@@ -49,6 +50,15 @@ describe('Ollama reasoning privacy', () => {
       reasoningActive: false,
     })
   })
+
+  it('removes inline reasoning from complete non-streaming responses', () => {
+    const result = normalizeCompleteReasoning(
+      '<think>system prompt and private context</think>Final answer',
+      { reasoning: 'provider-private reasoning' }
+    )
+    assert.deepEqual(result, { content: 'Final answer', reasoningActive: true })
+    assert.doesNotMatch(JSON.stringify(result), /system prompt|private context|provider-private/)
+  })
 })
 
 describe('Ollama disconnect cancellation', () => {
@@ -63,6 +73,13 @@ describe('Ollama disconnect cancellation', () => {
     disposed.dispose()
     second.emit('close')
     assert.equal(disposed.signal.aborted, false)
+  })
+
+  it('is already aborted when the response closed before listener registration', () => {
+    const alreadyClosed = Object.assign(new EventEmitter(), { destroyed: true })
+    const lifetime = abortOnClientClose(alreadyClosed)
+    assert.equal(lifetime.signal.aborted, true)
+    assert.equal(alreadyClosed.listenerCount('close'), 0)
   })
 })
 
@@ -95,5 +112,7 @@ describe('model capability cache', () => {
     assert.equal(cache.get('qwen'), true)
     assert.equal(cache.get('plain'), false)
     assert.equal(cache.get('QWEN'), undefined)
+    cache.invalidate('qwen')
+    assert.equal(cache.get('qwen'), undefined)
   })
 })

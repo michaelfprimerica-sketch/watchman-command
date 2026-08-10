@@ -8,6 +8,10 @@ export class ModelCapabilityCache {
   recordSuccessfulLookup(modelName: string, capable: boolean): void {
     this.values.set(modelName, capable)
   }
+
+  invalidate(modelName: string): void {
+    this.values.delete(modelName)
+  }
 }
 
 export function hasUsableRecommendedModels<T>(models: T[] | null): models is T[] {

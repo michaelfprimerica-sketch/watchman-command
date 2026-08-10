@@ -19,7 +19,10 @@ import { BROADCAST_CHANNELS } from '../../constants/broadcast.js'
 import env from '#start/env'
 import { NOMAD_API_DEFAULT_BASE_URL } from '../../constants/misc.js'
 import KVStore from '#models/kv_store'
-import { hasNativeReasoning, SafeReasoningStreamNormalizer } from '../utils/reasoning_privacy.js'
+import {
+  normalizeCompleteReasoning,
+  SafeReasoningStreamNormalizer,
+} from '../utils/reasoning_privacy.js'
 import {
   hasUsableRecommendedModels,
   isUsableModelCatalogCache,
@@ -275,6 +278,7 @@ export class OllamaService {
       })
 
       logger.info(`[OllamaService] Model "${model}" downloaded successfully.`)
+      this.thinkingCapabilityCache.invalidate(model)
       return { success: true, message: 'Model downloaded successfully.' }
     } catch (error) {
       // Detect axios cancel (signal-triggered abort). Don't broadcast an error event for
@@ -356,11 +360,12 @@ export class OllamaService {
       signal: chatRequest.signal,
     })
     const choice = response.choices[0]
+    const safeMessage = normalizeCompleteReasoning(choice.message.content ?? '', choice.message)
 
     return {
       message: {
-        content: choice.message.content ?? '',
-        reasoningActive: hasNativeReasoning(choice.message),
+        content: safeMessage.content,
+        reasoningActive: safeMessage.reasoningActive,
       },
       done: true,
       model: response.model,
@@ -455,6 +460,7 @@ export class OllamaService {
         data: { model: modelName },
         timeout: 10000,
       })
+      this.thinkingCapabilityCache.invalidate(modelName)
       return { success: true, message: `Model "${modelName}" deleted.` }
     } catch (error) {
       logger.error(

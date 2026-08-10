@@ -1,4 +1,5 @@
 export interface CloseEventSource {
+  destroyed?: boolean
   once(event: 'close', listener: () => void): unknown
   off(event: 'close', listener: () => void): unknown
 }
@@ -9,7 +10,8 @@ export function abortOnClientClose(source: CloseEventSource): {
 } {
   const controller = new AbortController()
   const onClose = () => controller.abort()
-  source.once('close', onClose)
+  if (source.destroyed) controller.abort()
+  else source.once('close', onClose)
   return {
     signal: controller.signal,
     dispose: () => source.off('close', onClose),
