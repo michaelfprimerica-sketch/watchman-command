@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
-import { Readable } from 'node:stream'
+import { PassThrough, Readable } from 'node:stream'
 import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import axios from 'axios'
-import { doResumableDownload } from '../../app/utils/downloads.js'
+import { doResumableDownload, doResumableDownloadWithRetry } from '../../app/utils/downloads.js'
 
 describe('resumable content downloads', () => {
   const payload = Buffer.from('watchman-command-content')
@@ -95,6 +95,48 @@ describe('resumable content downloads', () => {
 
     assert.equal(requestedRange, undefined)
     assert.deepEqual(await readFile(filepath), payload)
+  })
+
+  it('treats a zero-byte staging file as a clean download', async () => {
+    const filepath = join(directory, 'content.zim')
+    await writeFile(`${filepath}.tmp`, Buffer.alloc(0))
+    let requestedRange: unknown = 'not-called'
+    axios.get = (async (_url, config) => {
+      requestedRange = config?.headers?.Range
+      return { status: 200, headers: {}, data: Readable.from(payload) }
+    }) as typeof axios.get
+
+    await doResumableDownload({
+      url: 'https://example.invalid/content.zim',
+      filepath,
+      timeout: 1_000,
+      allowedMimeTypes: [],
+    })
+
+    assert.equal(requestedRange, undefined)
+    assert.deepEqual(await readFile(filepath), payload)
+  })
+
+  it('promotes an equal-size staging file without another content request', async () => {
+    const filepath = join(directory, 'content.zim')
+    await writeFile(`${filepath}.tmp`, payload)
+    let completions = 0
+    axios.get = (async () => {
+      throw new Error('content request should not occur')
+    }) as typeof axios.get
+
+    await doResumableDownload({
+      url: 'https://example.invalid/content.zim',
+      filepath,
+      timeout: 1_000,
+      allowedMimeTypes: [],
+      onComplete: async () => {
+        completions += 1
+      },
+    })
+
+    assert.deepEqual(await readFile(filepath), payload)
+    assert.equal(completions, 1)
   })
 
   it('restarts from zero when a resumed response has the wrong Content-Range', async () => {
@@ -197,5 +239,66 @@ describe('resumable content downloads', () => {
     })
 
     assert.equal(completions, 1)
+  })
+
+  it('preserves staging data and publishes no final file when cancelled', async () => {
+    const filepath = join(directory, 'content.zim')
+    const source = new PassThrough()
+    const controller = new AbortController()
+    axios.get = (async () => ({ status: 200, headers: {}, data: source })) as typeof axios.get
+
+    const download = doResumableDownload({
+      url: 'https://example.invalid/content.zim',
+      filepath,
+      timeout: 1_000,
+      signal: controller.signal,
+      allowedMimeTypes: [],
+    })
+    source.write(payload.subarray(0, 8))
+    await new Promise((resolve) => setImmediate(resolve))
+    controller.abort()
+
+    await assert.rejects(download, /Download aborted/)
+    await assert.rejects(access(filepath))
+    const staged = await readFile(`${filepath}.tmp`)
+    assert.deepEqual(staged, payload.subarray(0, staged.length))
+    assert.ok(staged.length <= 8)
+  })
+
+  it('retries recoverable network failures and then completes', async () => {
+    const filepath = join(directory, 'content.zim')
+    let headAttempts = 0
+    axios.head = (async () => {
+      headAttempts += 1
+      if (headAttempts < 3) {
+        const error = new Error('temporary connection reset') as Error & { code: string }
+        error.code = 'ECONNRESET'
+        throw error
+      }
+      return {
+        headers: {
+          'content-length': String(payload.length),
+          'content-type': 'application/octet-stream',
+          'accept-ranges': 'bytes',
+        },
+      }
+    }) as typeof axios.head
+    axios.get = (async () => ({
+      status: 200,
+      headers: {},
+      data: Readable.from(payload),
+    })) as typeof axios.get
+
+    await doResumableDownloadWithRetry({
+      url: 'https://example.invalid/content.zim',
+      filepath,
+      timeout: 1_000,
+      retry_delay: 0,
+      max_retries: 3,
+      allowedMimeTypes: [],
+    })
+
+    assert.equal(headAttempts, 3)
+    assert.deepEqual(await readFile(filepath), payload)
   })
 })

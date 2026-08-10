@@ -271,6 +271,7 @@ export async function doResumableDownload({
 
     const cleanup = (error?: Error) => {
       clearStallTimer()
+      signal?.removeEventListener('abort', abortHandler)
       progressStream.destroy()
       response.data.destroy()
       writeStream.destroy()
@@ -283,12 +284,18 @@ export async function doResumableDownload({
     progressStream.on('error', cleanup)
     writeStream.on('error', cleanup)
 
-    signal?.addEventListener('abort', () => {
+    const abortHandler = () => {
       cleanup(new Error('Download aborted'))
-    })
+    }
+    if (signal?.aborted) {
+      abortHandler()
+      return
+    }
+    signal?.addEventListener('abort', abortHandler, { once: true })
 
     writeStream.on('finish', async () => {
       clearStallTimer()
+      signal?.removeEventListener('abort', abortHandler)
       try {
         const stagedFileStats = await getFileStatsIfExists(tempPath)
         if (stagedFileStats && totalBytes > 0 && Number(stagedFileStats.size) !== totalBytes) {
