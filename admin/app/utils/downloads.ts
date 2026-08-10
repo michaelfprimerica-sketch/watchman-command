@@ -17,6 +17,28 @@ const DOWNLOAD_HEADERS: Record<string, string> = {
     'WatchmanCommand/1.0 (+https://github.com/michaelfprimerica-sketch/watchman-command)',
 }
 
+/** A remote source permanently rejected this installation's authorization. */
+export class PermanentDownloadAuthError extends Error {
+  constructor(status: number) {
+    super(`Download authorization was rejected by the server (HTTP ${status}).`)
+    this.name = 'PermanentDownloadAuthError'
+  }
+}
+
+export function classifyPermanentDownloadError(error: any): PermanentDownloadAuthError | null {
+  const status = error?.response?.status
+  if (status === 401 || status === 403) {
+    return new PermanentDownloadAuthError(status)
+  }
+  return null
+}
+
+function rethrowPermanentDownloadError(error: any): never {
+  const permanentError = classifyPermanentDownloadError(error)
+  if (permanentError) throw permanentError
+  throw error
+}
+
 /**
  * Perform a resumable download with progress tracking
  * @param param0 - Download parameters. Leave allowedMimeTypes empty to skip mime type checking.
@@ -50,11 +72,13 @@ export async function doResumableDownload({
   }
 
   // Get file info with HEAD request first
-  const headResponse = await axios.head(url, {
-    signal,
-    timeout,
-    headers: DOWNLOAD_HEADERS,
-  })
+  const headResponse = await axios
+    .head(url, {
+      signal,
+      timeout,
+      headers: DOWNLOAD_HEADERS,
+    })
+    .catch(rethrowPermanentDownloadError)
 
   // Some upstream hosts (notably download.kiwix.org for .zim files) don't set a
   // Content-Type header at all. Per RFC 7231 §3.1.1.5, "if no Content-Type is
@@ -108,7 +132,7 @@ export async function doResumableDownload({
       headers: { ...DOWNLOAD_HEADERS, ...hdrs },
       signal,
       timeout,
-    })
+    }).catch(rethrowPermanentDownloadError)
 
   let response = await fetchStream(headers)
 

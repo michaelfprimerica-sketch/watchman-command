@@ -1,7 +1,7 @@
 import { Job, UnrecoverableError } from 'bullmq'
 import { RunDownloadJobParams, DownloadProgressData } from '../../types/downloads.js'
 import { QueueService } from '#services/queue_service'
-import { doResumableDownload } from '../utils/downloads.js'
+import { doResumableDownload, PermanentDownloadAuthError } from '../utils/downloads.js'
 import { createHash } from 'crypto'
 import { DockerService } from '#services/docker_service'
 import { ZimService } from '#services/zim_service'
@@ -312,6 +312,9 @@ export class RunDownloadJob {
       // Check both the flag (Redis poll) and abort reason (in-process cancel).
       if (userCancelled || abortController.signal.reason === 'user-cancel') {
         throw new UnrecoverableError(`Download cancelled: ${error.message}`)
+      }
+      if (error instanceof PermanentDownloadAuthError) {
+        throw new UnrecoverableError(error.message)
       }
       throw error
     } finally {
