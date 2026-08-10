@@ -554,14 +554,27 @@ export class ZimService {
 
     const ollamaUrl = await this.dockerService.getServiceURL('nomad_ollama')
     if (ollamaUrl) {
+      const filePath = join(process.cwd(), ZIM_STORAGE_PATH, filename)
       try {
-        const { EmbedFileJob } = await import('#jobs/embed_file_job')
-        await EmbedFileJob.dispatch({
-          fileName: filename,
-          filePath: join(process.cwd(), ZIM_STORAGE_PATH, filename),
-        })
+        const { default: KVStore } = await import('#models/kv_store')
+        const { default: KbIngestState } = await import('#models/kb_ingest_state')
+        const { decideScanAction } = await import('../utils/kb_ingest_decision.js')
+
+        // Match the scanner and post-download paths: unset preserves legacy
+        // auto-ingest, while Manual requires an explicit per-file decision.
+        const policyRaw = await KVStore.getValue('rag.defaultIngestPolicy')
+        const policy = policyRaw === 'Manual' ? 'Manual' : 'Always'
+        const existing = await KbIngestState.findBy('file_path', filePath)
+        const action = decideScanAction(existing, false, policy)
+
+        if (action.kind === 'dispatch') {
+          const { EmbedFileJob } = await import('#jobs/embed_file_job')
+          await EmbedFileJob.dispatch({ fileName: filename, filePath })
+        } else if (action.kind === 'create_pending') {
+          await KbIngestState.getOrCreate(filePath)
+        }
       } catch (error) {
-        logger.error(`[ZimService] EmbedFileJob dispatch failed after local upload:`, error)
+        logger.error(`[ZimService] KB ingest decision failed after local upload:`, error)
       }
     }
 
