@@ -98,6 +98,8 @@ describe('InstructionPolicyService', () => {
     const outsideDirectory = join(root, 'outside-directory')
     await mkdir(outsideDirectory)
     await symlink(outsideDirectory, join(root, 'policy'))
+    await writeFile(join(outsideDirectory, 'admin.md'), 'outside policy')
+    await assert.rejects(service.readAdminPolicy(), /symbolic link|resolves outside/)
     await assert.rejects(service.writeAdminPolicy('policy'), /symbolic link/)
     assert.equal(basename(service.adminPolicyPath), 'admin.md')
   })

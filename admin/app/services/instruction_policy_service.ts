@@ -32,6 +32,7 @@ export class InstructionPolicyService {
 
   async readAdminPolicy(): Promise<string | null> {
     try {
+      await this.assertPolicyDirectoryIsSafe()
       const stats = await lstat(this.adminPolicyPath)
       if (stats.isSymbolicLink() || !stats.isFile()) {
         throw new Error('Admin policy must be a regular file, not a symbolic link.')
