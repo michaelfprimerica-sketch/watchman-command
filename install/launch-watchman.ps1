@@ -1,17 +1,20 @@
+[CmdletBinding()]
+param(
+    [string]$WslDistro = $env:WATCHMAN_WSL_DISTRO,
+    [string]$WslProjectPath = $env:WATCHMAN_WSL_PROJECT_PATH
+)
+
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
 $AppDataDir = Join-Path $env:LOCALAPPDATA 'WatchmanCommand'
 $LogPath = Join-Path $AppDataDir 'launcher.log'
 $IconPath = Join-Path $AppDataDir 'watchman-command.ico'
-$WslProjectPath = '/home/user/Development/watchman-command'
-$WslStartScript = '/home/user/Development/watchman-command/install/start_nomad.sh'
 $BaseUrl = 'http://127.0.0.1:8080'
 $ApplicationUrl = "$BaseUrl/home"
 $HealthUrl = "$BaseUrl/api/health"
 $StartupTimeoutSeconds = 300
 $PollIntervalSeconds = 2
-$WslDistro = 'Ubuntu-24.04'
 
 New-Item -ItemType Directory -Path $AppDataDir -Force | Out-Null
 if (-not (Test-Path -LiteralPath $LogPath)) {
@@ -54,6 +57,12 @@ function Test-AppReady {
 }
 
 function Get-WslDistro {
+    param([string]$ConfiguredDistro)
+
+    if (-not [string]::IsNullOrWhiteSpace($ConfiguredDistro)) {
+        return $ConfiguredDistro
+    }
+
     if ($env:WSL_DISTRO_NAME) {
         return $env:WSL_DISTRO_NAME
     }
@@ -68,17 +77,31 @@ function Get-WslDistro {
         throw 'No WSL distributions were detected using wsl.exe -l -q.'
     }
 
-    $preferred = $candidates | Where-Object { $_ -eq 'Ubuntu-24.04' }
-    if ($preferred) {
-        return $preferred[0]
-    }
-
     $preferred = $candidates | Where-Object { $_ -match 'Ubuntu' }
     if ($preferred) {
         return $preferred[0]
     }
 
     return $candidates[0]
+}
+
+function Get-WslProjectPath {
+    param(
+        [string]$ConfiguredPath,
+        [string]$Distro
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($ConfiguredPath)) {
+        return $ConfiguredPath.TrimEnd('/')
+    }
+
+    $windowsRepoPath = Split-Path -Parent $PSScriptRoot
+    $convertedPath = & wsl.exe -d $Distro -- wslpath -a -u $windowsRepoPath 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $convertedPath) {
+        throw 'Unable to resolve the repository path in WSL. Set WATCHMAN_WSL_PROJECT_PATH or pass -WslProjectPath.'
+    }
+
+    return ([string]$convertedPath).Trim().TrimEnd('/')
 }
 
 function Invoke-Wsl {
@@ -115,17 +138,19 @@ function Invoke-Wsl {
 }
 
 function Ensure-ProjectStarted {
-    $startScript = [string]$WslStartScript -replace '\\', '/'
+    $encodedStartScript = [Convert]::ToBase64String(
+        [Text.Encoding]::UTF8.GetBytes([string]$WslStartScript)
+    )
     $startCommand = @"
 set -euo pipefail
 
-cd '$WslProjectPath'
-if [ ! -x '$startScript' ]; then
-  echo "[watchman] Missing start helper: $startScript"
+start_script="`$(printf '%s' '$encodedStartScript' | base64 --decode)"
+if [ ! -f "`$start_script" ]; then
+  echo "[watchman] Missing start helper: `$start_script"
   exit 11
 fi
 
-./install/start_nomad.sh
+exec bash "`$start_script"
 "@
 
     Write-Log 'Watchman Command not reachable; attempting to start services via WSL.'
@@ -166,17 +191,18 @@ if (-not (Test-Path -LiteralPath $IconPath)) {
 }
 
 try {
-    $DetectedDistro = Get-WslDistro
+    $DetectedDistro = Get-WslDistro -ConfiguredDistro $WslDistro
     if ([string]::IsNullOrWhiteSpace($DetectedDistro)) {
         throw 'No WSL distribution could be detected.'
     }
-    if ($DetectedDistro -ne 'Ubuntu-24.04') {
-        Write-Log "Preferred WSL distribution Ubuntu-24.04 not currently default; using Ubuntu-24.04 if available."
-    }
-    $WslDistro = 'Ubuntu-24.04'
+    $WslDistro = $DetectedDistro
     Write-Log "Using WSL distribution: $WslDistro"
+
+    $WslProjectPath = Get-WslProjectPath -ConfiguredPath $WslProjectPath -Distro $WslDistro
+    $WslStartScript = "$WslProjectPath/install/start_nomad.sh"
+    Write-Log "Using WSL project path: $WslProjectPath"
 } catch {
-    Show-Error "Cannot determine WSL distribution. $_"
+    Show-Error "Cannot determine the WSL launch configuration. $_"
 }
 
 if (Test-AppReady -Url $HealthUrl) {
@@ -197,4 +223,4 @@ if (Wait-ForReady) {
     exit 0
 }
 
-Show-Error "Watchman Command did not become reachable on $HealthUrl within $StartupTimeoutSeconds seconds. Check the startup log at $LogPath and run: wsl -d $WslDistro -- bash -lc '/home/user/Development/watchman-command/install/start_nomad.sh'"
+Show-Error "Watchman Command did not become reachable on $HealthUrl within $StartupTimeoutSeconds seconds. Check the startup log at $LogPath and run the start helper in $WslProjectPath."

@@ -147,16 +147,6 @@ check_is_debug_mode(){
   fi
 }
 
-generateRandomPass() {
-  local length="${1:-32}"  # Default to 32
-  local password
-  
-  # Generate random password using /dev/urandom
-  password=$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c "$length")
-  
-  echo "$password"
-}
-
 ensure_docker_installed() {
   if ! command -v docker &> /dev/null; then
     echo -e "${YELLOW}#${RESET} Docker not found. Installing Docker...\\n"
@@ -409,56 +399,29 @@ create_nomad_directory(){
 }
 
 download_management_compose_file() {
-  local compose_file_path="${NOMAD_DIR}/compose.yml"
-
-  echo -e "${YELLOW}#${RESET} Copying local docker-compose file for management...\\n"
-  if ! sudo cp "$MANAGEMENT_COMPOSE_FILE_LOCAL" "$compose_file_path"; then
-    echo -e "${RED}#${RESET} Failed to copy the docker compose file from ${MANAGEMENT_COMPOSE_FILE_LOCAL}. Please check permissions."
+  echo -e "${YELLOW}#${RESET} Validating local docker-compose file for management...\\n"
+  if [[ ! -f "$MANAGEMENT_COMPOSE_FILE_LOCAL" ]]; then
+    echo -e "${RED}#${RESET} Local compose file not found at ${MANAGEMENT_COMPOSE_FILE_LOCAL}."
     exit 1
   fi
-  echo -e "${GREEN}#${RESET} Docker compose file copied successfully to $compose_file_path.\\n"
-
-  # Keep local compose isolated to this checkout and avoid legacy placeholder mutation.
-  echo -e "${GREEN}#${RESET} Using local compose template from ${MANAGEMENT_COMPOSE_FILE_LOCAL}.\\n"
-
-  # If MySQL data directory exists from a previous install attempt, remove it.
-  # MySQL only initializes credentials on first startup when the data dir is empty.
-  if [[ -d "${NOMAD_DIR}/mysql" ]]; then
-    echo -e "${YELLOW}#${RESET} Removing existing MySQL data directory to ensure clean startup credentials...\\n"
-    sudo rm -rf "${NOMAD_DIR}/mysql"
-  fi
+  echo -e "${GREEN}#${RESET} Using local compose file ${MANAGEMENT_COMPOSE_FILE_LOCAL}.\\n"
 }
 
 download_helper_scripts() {
-  local start_script_path="${NOMAD_DIR}/start_nomad.sh"
-  local stop_script_path="${NOMAD_DIR}/stop_nomad.sh"
-  local update_script_path="${NOMAD_DIR}/update_nomad.sh"
-
-  echo -e "${YELLOW}#${RESET} Copying local helper scripts...\\n"
-  if ! sudo cp "$START_SCRIPT_LOCAL" "$start_script_path"; then
-    echo -e "${RED}#${RESET} Failed to copy the start script."
-    exit 1
-  fi
-  chmod +x "$start_script_path"
-
-  if ! sudo cp "$STOP_SCRIPT_LOCAL" "$stop_script_path"; then
-    echo -e "${RED}#${RESET} Failed to copy the stop script."
-    exit 1
-  fi
-  chmod +x "$stop_script_path"
-
-  if ! sudo cp "$UPDATE_SCRIPT_LOCAL" "$update_script_path"; then
-    echo -e "${RED}#${RESET} Failed to copy the update script."
-    exit 1
-  fi
-  chmod +x "$update_script_path"
-
-  echo -e "${GREEN}#${RESET} Helper scripts copied successfully to $start_script_path, $stop_script_path, and $update_script_path.\\n"
+  echo -e "${YELLOW}#${RESET} Validating local helper scripts...\\n"
+  local helper_script
+  for helper_script in "$START_SCRIPT_LOCAL" "$STOP_SCRIPT_LOCAL" "$UPDATE_SCRIPT_LOCAL"; do
+    if [[ ! -f "$helper_script" ]]; then
+      echo -e "${RED}#${RESET} Required helper script not found: ${helper_script}"
+      exit 1
+    fi
+  done
+  echo -e "${GREEN}#${RESET} Local helper scripts are available in ${SCRIPT_DIR}.\\n"
 }
 
 start_management_containers() {
-  echo -e "${YELLOW}#${RESET} Starting management containers using docker compose...\\n"
-  if ! sudo docker compose -p watchman-command -f "${NOMAD_DIR}/compose.yml" up -d; then
+  echo -e "${YELLOW}#${RESET} Starting management containers using the Watchman helper...\\n"
+  if ! "$START_SCRIPT_LOCAL"; then
     echo -e "${RED}#${RESET} Failed to start management containers. Please check the logs and try again."
     exit 1
   fi
@@ -585,7 +548,7 @@ verify_gpu_setup() {
 success_message() {
   echo -e "${GREEN}#${RESET} Project N.O.M.A.D installation completed successfully!\\n"
   echo -e "${GREEN}#${RESET} Installation files are located at ${NOMAD_DIR}\\n\n"
-  echo -e "${GREEN}#${RESET} Project N.O.M.A.D's Command Center should automatically start whenever your device reboots. However, if you need to start it manually, you can always do so by running: ${WHITE_R}${NOMAD_DIR}/start_nomad.sh${RESET}\\n"
+  echo -e "${GREEN}#${RESET} Project N.O.M.A.D's Command Center should automatically start whenever your device reboots. However, if you need to start it manually, you can always do so by running: ${WHITE_R}${START_SCRIPT_LOCAL}${RESET}\\n"
   echo -e "${GREEN}#${RESET} You can now access the management interface at http://localhost:8080 or http://${local_ip_address}:8080\\n"
   echo -e "${GREEN}#${RESET} Thank you for supporting Project N.O.M.A.D!\\n"
 }

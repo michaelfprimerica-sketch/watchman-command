@@ -25,10 +25,11 @@ require_command() {
 
 generate_secret() {
   local length="$1"
-  local charset='A-Za-z0-9'
-  # shellcheck disable=SC2001
-  tr -dc "$charset" < /dev/urandom | head -c "$length"
-  echo
+  local byte_count=$(((length + 1) / 2))
+  local secret
+
+  secret="$(od -An -N "$byte_count" -tx1 /dev/urandom | tr -d ' \n')"
+  printf '%s\n' "${secret:0:length}"
 }
 
 load_env_value() {
@@ -66,7 +67,7 @@ ensure_config_file() {
     watchman_db_root_password="$(generate_secret 32)"
   fi
 
-  cat > "$ENV_FILE" <<EOF
+  (umask 077; cat > "$ENV_FILE" <<EOF
 WATCHMAN_PROJECT_ROOT=${WATCHMAN_PROJECT_ROOT}
 WATCHMAN_STORAGE_DIR=${WATCHMAN_HOST_PATH}
 WATCHMAN_URL=${WATCHMAN_URL}
@@ -74,6 +75,8 @@ WATCHMAN_APP_KEY=${watchman_app_key}
 WATCHMAN_DB_PASSWORD=${watchman_db_password}
 WATCHMAN_DB_ROOT_PASSWORD=${watchman_db_root_password}
 EOF
+  )
+  chmod 600 "$ENV_FILE"
 }
 
 ensure_directories() {
@@ -106,8 +109,6 @@ main() {
   echo "[${SCRIPT_NAME}] Starting Watchman Command from ${WATCHMAN_PROJECT_ROOT}"
 
   require_command docker
-  require_command docker-compose || true
-  # shellcheck disable=SC2230
   if ! docker compose version >/dev/null 2>&1; then
     echo "Docker Compose plugin not available. This script requires Docker Compose v2 (docker compose)."
     exit 1
@@ -126,13 +127,15 @@ main() {
     exit 1
   fi
 
+  local compose_args=(
+    --project-name "$COMPOSE_PROJECT_NAME"
+    --env-file "$ENV_FILE"
+    -f "$COMPOSE_FILE"
+  )
+
   # Build only if needed and start without duplicating containers.
   echo "Building and starting Watchman Command containers..."
-  docker compose \
-    --project-name "$COMPOSE_PROJECT_NAME" \
-    --env-file "$ENV_FILE" \
-    -f "$COMPOSE_FILE" \
-    up -d --build
+  docker compose "${compose_args[@]}" up -d --build
 
   echo "Verifying admin image ${WATCHMAN_IMAGE} exists."
   docker image inspect "$WATCHMAN_IMAGE" >/dev/null 2>&1 || {
@@ -145,7 +148,7 @@ main() {
   fi
 
   echo "Started containers:"
-  docker compose --project-name "$COMPOSE_PROJECT_NAME" -f "$COMPOSE_FILE" ps
+  docker compose "${compose_args[@]}" ps
 
   echo "Watchman Command ready at ${WATCHMAN_URL} and can be opened in browser."
 }
