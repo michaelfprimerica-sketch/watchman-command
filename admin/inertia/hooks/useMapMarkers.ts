@@ -2,15 +2,15 @@ import { useState, useCallback, useEffect } from 'react'
 import api from '~/lib/api'
 
 export const PIN_COLORS = [
-  { id: 'orange', label: 'Orange', hex: '#a84a12' },
-  { id: 'red', label: 'Red', hex: '#994444' },
-  { id: 'green', label: 'Green', hex: '#424420' },
+  { id: 'orange', label: 'Orange', hex: 'var(--color-desert-orange)' },
+  { id: 'red', label: 'Red', hex: 'var(--color-desert-red)' },
+  { id: 'green', label: 'Green', hex: 'var(--color-desert-green)' },
   { id: 'blue', label: 'Blue', hex: '#2563eb' },
   { id: 'purple', label: 'Purple', hex: '#7c3aed' },
   { id: 'yellow', label: 'Yellow', hex: '#ca8a04' },
 ] as const
 
-export type PinColorId = typeof PIN_COLORS[number]['id']
+export type PinColorId = (typeof PIN_COLORS)[number]['id']
 
 export interface MapMarker {
   id: number
@@ -67,18 +67,19 @@ export function useMapMarkers() {
     []
   )
 
-  const updateMarker = useCallback(async (id: number, updates: { name?: string; color?: string }) => {
-    const result = await api.updateMapMarker(id, updates)
-    if (result) {
-      setMarkers((prev) =>
-        prev.map((m) =>
-          m.id === id
-            ? { ...m, name: result.name, color: result.color as PinColorId }
-            : m
+  const updateMarker = useCallback(
+    async (id: number, updates: { name?: string; color?: string }) => {
+      const result = await api.updateMapMarker(id, updates)
+      if (result) {
+        setMarkers((prev) =>
+          prev.map((m) =>
+            m.id === id ? { ...m, name: result.name, color: result.color as PinColorId } : m
+          )
         )
-      )
-    }
-  }, [])
+      }
+    },
+    []
+  )
 
   const deleteMarker = useCallback(async (id: number) => {
     await api.deleteMapMarker(id)

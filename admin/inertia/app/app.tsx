@@ -26,7 +26,7 @@ if (!window.crypto?.randomUUID) {
 }
 
 createInertiaApp({
-  progress: { color: '#424420' },
+  progress: { color: 'var(--color-desert-green)' },
 
   title: (title) => `${title} - ${appName}`,
 
@@ -40,11 +40,16 @@ createInertiaApp({
     createRoot(el).render(
       <QueryClientProvider client={queryClient}>
         <ThemeProvider>
-          <TransmitProvider baseUrl={window.location.origin} enableLogging={environment === 'development'}>
+          <TransmitProvider
+            baseUrl={window.location.origin}
+            enableLogging={environment === 'development'}
+          >
             <NotificationsProvider>
               <ModalsProvider>
                 <App {...props} />
-                {showDevtools && <ReactQueryDevtools initialIsOpen={false} buttonPosition='bottom-left' />}
+                {showDevtools && (
+                  <ReactQueryDevtools initialIsOpen={false} buttonPosition="bottom-left" />
+                )}
               </ModalsProvider>
             </NotificationsProvider>
           </TransmitProvider>

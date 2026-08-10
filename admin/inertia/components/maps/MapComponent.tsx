@@ -60,10 +60,7 @@ const getSavedMapView = (): SavedMapView | null => {
   return null
 }
 
-export default function MapComponent({
-  isHoveringUI,
-  showCoordinatesEnabled,
-}: MapComponentProps) {
+export default function MapComponent({ isHoveringUI, showCoordinatesEnabled }: MapComponentProps) {
   const mapRef = useRef<MapRef>(null)
   const animationFrameRef = useRef<number | null>(null)
 
@@ -349,7 +346,7 @@ export default function MapComponent({
                     type="button"
                     onClick={handleSaveMarker}
                     disabled={!markerName.trim()}
-                    className="text-xs bg-[#424420] text-white rounded px-2.5 py-1 hover:bg-[#525530] disabled:opacity-40 transition-colors"
+                    className="text-xs bg-desert-green text-white rounded px-2.5 py-1 hover:bg-desert-green-dark disabled:opacity-40 transition-colors"
                   >
                     Save
                   </button>

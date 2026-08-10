@@ -44,9 +44,7 @@ export default function MarkerPanel({
       <div className="flex items-center justify-between px-3 py-2.5 border-b border-border-subtle">
         <div className="flex items-center gap-2">
           <IconMapPin size={18} className="text-desert-orange" />
-          <span className="text-sm font-semibold text-text-primary">
-            Saved Locations
-          </span>
+          <span className="text-sm font-semibold text-text-primary">Saved Locations</span>
           {markers.length > 0 && (
             <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-desert-orange text-[11px] font-bold text-white px-1">
               {markers.length}
@@ -67,9 +65,7 @@ export default function MarkerPanel({
         {markers.length === 0 ? (
           <div className="px-3 py-6 text-center">
             <IconMapPinFilled size={24} className="mx-auto mb-2 text-text-muted" />
-            <p className="text-sm text-text-muted">
-              Click anywhere on the map to drop a pin
-            </p>
+            <p className="text-sm text-text-muted">Click anywhere on the map to drop a pin</p>
           </div>
         ) : (
           <ul>
@@ -85,7 +81,11 @@ export default function MarkerPanel({
                 <IconMapPinFilled
                   size={16}
                   className="shrink-0"
-                  style={{ color: PIN_COLORS.find((c) => c.id === marker.color)?.hex ?? '#a84a12' }}
+                  style={{
+                    color:
+                      PIN_COLORS.find((c) => c.id === marker.color)?.hex ??
+                      'var(--color-desert-orange)',
+                  }}
                 />
                 <button
                   onClick={() => {
@@ -95,9 +95,7 @@ export default function MarkerPanel({
                   className="flex-1 min-w-0 text-left"
                   title={marker.name}
                 >
-                  <p className="text-sm font-medium text-text-primary truncate">
-                    {marker.name}
-                  </p>
+                  <p className="text-sm font-medium text-text-primary truncate">{marker.name}</p>
                 </button>
                 <button
                   onClick={() => onDelete(marker.id)}
