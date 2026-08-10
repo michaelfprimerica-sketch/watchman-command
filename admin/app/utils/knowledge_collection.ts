@@ -19,3 +19,11 @@ export function normalizeKnowledgeCollection(value: unknown): string | null {
 
   return normalized
 }
+
+/** Preserve a durable pre-index assignment unless the dispatched job overrides it. */
+export function resolveEffectiveCollection(
+  dispatched: string | undefined,
+  durable: string | null | undefined
+): string | undefined {
+  return dispatched ?? durable ?? undefined
+}

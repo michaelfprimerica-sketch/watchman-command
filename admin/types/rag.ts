@@ -65,6 +65,8 @@ export type StoredFileInfo = {
   /** True when `source` lives under the user-uploads directory. Drives which
    * rows offer view/download in the UI. */
   isUserUpload: boolean
+  /** Generic user-defined grouping; separate from future Watchman Knowledge Packs. */
+  collection: string | null
 }
 
 /**

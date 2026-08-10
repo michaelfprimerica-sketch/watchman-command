@@ -4,6 +4,7 @@ import { describe, it } from 'node:test'
 import {
   KNOWLEDGE_COLLECTION_MAX_LENGTH,
   normalizeKnowledgeCollection,
+  resolveEffectiveCollection,
 } from '../../app/utils/knowledge_collection.js'
 
 const require = createRequire(import.meta.url)
@@ -37,6 +38,14 @@ describe('Knowledge Collection normalization', () => {
       () => normalizeKnowledgeCollection('a'.repeat(KNOWLEDGE_COLLECTION_MAX_LENGTH + 1)),
       RangeError
     )
+  })
+})
+
+describe('Knowledge Collection ingestion assignment', () => {
+  it('preserves an assignment made before indexing and permits an explicit job override', () => {
+    assert.equal(resolveEffectiveCollection(undefined, 'field guides'), 'field guides')
+    assert.equal(resolveEffectiveCollection('mission brief', 'field guides'), 'mission brief')
+    assert.equal(resolveEffectiveCollection(undefined, null), undefined)
   })
 })
 

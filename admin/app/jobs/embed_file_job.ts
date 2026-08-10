@@ -5,17 +5,18 @@ import { RagService } from '#services/rag_service'
 import { DockerService } from '#services/docker_service'
 import { OllamaService } from '#services/ollama_service'
 import KbIngestState from '#models/kb_ingest_state'
-import { createHash } from 'crypto'
+import { createHash } from 'node:crypto'
 import logger from '@adonisjs/core/services/logger'
 import fs from 'node:fs/promises'
 import { ZIM_BATCH_SIZE } from '../../constants/zim_extraction.js'
+import { resolveEffectiveCollection } from '../utils/knowledge_collection.js'
 
 export interface EmbedFileJobParams {
   filePath: string
   fileName: string
   fileSize?: number
   // Batch processing for large ZIM files
-  batchOffset?: number  // Current batch offset (for ZIM files)
+  batchOffset?: number // Current batch offset (for ZIM files)
   totalArticles?: number // Total articles in ZIM (for progress tracking)
   isFinalBatch?: boolean // Whether this is the last batch (prevents premature deletion)
   // Running total of chunks embedded across prior batches in this dispatch chain.
@@ -23,6 +24,7 @@ export interface EmbedFileJobParams {
   // count via KbIngestState.markIndexed (see #933 — without this, only the last
   // batch's chunk count was stored while Qdrant held the full set).
   chunksSoFar?: number
+  collection?: string
 }
 
 export class EmbedFileJob {
@@ -56,7 +58,10 @@ export class EmbedFileJob {
   }
 
   async handle(job: Job) {
-    const { filePath, fileName, batchOffset, totalArticles } = job.data as EmbedFileJobParams
+    const { filePath, fileName, batchOffset, totalArticles, collection } =
+      job.data as EmbedFileJobParams
+    const durableState = await KbIngestState.findBy('file_path', filePath)
+    const effectiveCollection = resolveEffectiveCollection(collection, durableState?.collection)
 
     const isZimBatch = batchOffset !== undefined
     const batchInfo = isZimBatch ? ` (batch offset: ${batchOffset})` : ''
@@ -73,7 +78,9 @@ export class EmbedFileJob {
       const ollamaUrl = await dockerService.getServiceURL('nomad_ollama')
       if (!ollamaUrl) {
         logger.warn('[EmbedFileJob] Ollama is not installed. Skipping embedding for: %s', fileName)
-        throw new UnrecoverableError('Ollama service is not installed. Install AI Assistant to enable file embeddings.')
+        throw new UnrecoverableError(
+          'Ollama service is not installed. Install AI Assistant to enable file embeddings.'
+        )
       }
 
       const existingModels = await ollamaService.getModels()
@@ -85,7 +92,9 @@ export class EmbedFileJob {
       const qdrantUrl = await dockerService.getServiceURL('nomad_qdrant')
       if (!qdrantUrl) {
         logger.warn('[EmbedFileJob] Qdrant is not installed. Skipping embedding for: %s', fileName)
-        throw new UnrecoverableError('Qdrant service is not installed. Install AI Assistant to enable file embeddings.')
+        throw new UnrecoverableError(
+          'Qdrant service is not installed. Install AI Assistant to enable file embeddings.'
+        )
       }
 
       logger.info(`[EmbedFileJob] Services ready. Processing file: ${fileName}`)
@@ -136,7 +145,8 @@ export class EmbedFileJob {
         filePath,
         allowDeletion,
         batchOffset,
-        onProgress
+        onProgress,
+        effectiveCollection
       )
 
       if (!result.success) {
@@ -147,9 +157,7 @@ export class EmbedFileJob {
       // For ZIM files with batching, check if more batches are needed
       if (result.hasMoreBatches) {
         const nextOffset = (batchOffset || 0) + (result.articlesProcessed || 0)
-        logger.info(
-          `[EmbedFileJob] Batch complete. Dispatching next batch at offset ${nextOffset}`
-        )
+        logger.info(`[EmbedFileJob] Batch complete. Dispatching next batch at offset ${nextOffset}`)
 
         // Pace continuation batches when embedding is CPU-bound. Sustained 100% CPU
         // saturation across all cores during multi-batch ZIM ingestion can starve
@@ -190,6 +198,7 @@ export class EmbedFileJob {
           totalArticles: totalArticles || result.totalArticles,
           isFinalBatch: false, // Explicitly not final
           chunksSoFar: chunksSoFarNext,
+          ...(effectiveCollection ? { collection: effectiveCollection } : {}),
         })
 
         // Calculate progress based on articles processed.
@@ -203,7 +212,10 @@ export class EmbedFileJob {
         // the reported count so the gauge keeps creeping forward monotonically,
         // and never report 100% before the genuinely-final batch (handled below).
         const progress = totalArticles
-          ? Math.min(99, Math.round((nextOffset / Math.max(totalArticles, nextOffset + ZIM_BATCH_SIZE)) * 100))
+          ? Math.min(
+              99,
+              Math.round((nextOffset / Math.max(totalArticles, nextOffset + ZIM_BATCH_SIZE)) * 100)
+            )
           : 50
 
         await this.safeUpdateProgress(job, progress)
@@ -242,7 +254,7 @@ export class EmbedFileJob {
       // BullMQ's :completed retention (50 jobs) ages out, so the state row is
       // the only durable record of "this file finished embedding".
       try {
-        await KbIngestState.markIndexed(filePath, totalChunks)
+        await KbIngestState.markIndexed(filePath, totalChunks, effectiveCollection)
       } catch (stateErr) {
         logger.warn(
           `[EmbedFileJob] Failed to persist ingest state for ${fileName}: %s`,
@@ -274,7 +286,9 @@ export class EmbedFileJob {
           `[EmbedFileJob] Context-length overflow persisted for ${fileName} after truncation; not retrying.`
         )
         normalizedError = new UnrecoverableError(
-          error instanceof Error ? error.message : 'Embedding input exceeds the model context length'
+          error instanceof Error
+            ? error.message
+            : 'Embedding input exceeds the model context length'
         )
       }
 
@@ -383,9 +397,7 @@ export class EmbedFileJob {
         : force
           ? ' (forced re-dispatch)'
           : ''
-      logger.info(
-        `[EmbedFileJob] Dispatched embedding job for file: ${params.fileName}${label}`
-      )
+      logger.info(`[EmbedFileJob] Dispatched embedding job for file: ${params.fileName}${label}`)
 
       return {
         job,

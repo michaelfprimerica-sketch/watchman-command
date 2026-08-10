@@ -38,3 +38,23 @@ export const estimateBatchSchema = vine.compile(
       .maxLength(500),
   })
 )
+
+export const updateFileCollectionSchema = vine.compile(
+  vine.object({
+    source: vine.string().minLength(1).maxLength(2048),
+    collection: vine.string().nullable().optional(),
+  })
+)
+
+export const renameKnowledgeCollectionSchema = vine.compile(
+  vine.object({
+    oldName: vine.string(),
+    newName: vine.string(),
+  })
+)
+
+export const deleteKnowledgeCollectionSchema = vine.compile(
+  vine.object({
+    name: vine.string(),
+  })
+)
