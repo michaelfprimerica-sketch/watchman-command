@@ -45,6 +45,8 @@ import {
   assignCollectionPayload,
   ensureKnowledgePayloadIndexes,
   exactCollectionFilter,
+  KnowledgeCollectionMutationQueue,
+  QdrantCollectionInitializationGate,
   renameCollectionPayload,
   sourceHasEmbeddedPoints,
 } from '../utils/knowledge_collection_qdrant.js'
@@ -69,6 +71,8 @@ export class RagService {
   // Verified for this Qdrant process: collection exists and Watchman's current
   // source/content_type/collection payload indexes are present.
   private payloadIndexMemo = new QdrantIndexMemo()
+  private collectionInitializationGate = new QdrantCollectionInitializationGate()
+  private collectionMutationQueue = new KnowledgeCollectionMutationQueue()
   public static UPLOADS_STORAGE_PATH = 'storage/kb_uploads'
   public static CONTENT_COLLECTION_NAME = 'nomad_knowledge_base'
   public static EMBEDDING_DIMENSION = 768 // Nomic Embed Text v1.5 dimension is 768
@@ -139,6 +143,12 @@ export class RagService {
     collectionName: string,
     dimensions: number = RagService.EMBEDDING_DIMENSION
   ) {
+    return this.collectionInitializationGate.run(collectionName, async () => {
+      await this._ensureCollectionOnce(collectionName, dimensions)
+    })
+  }
+
+  private async _ensureCollectionOnce(collectionName: string, dimensions: number) {
     try {
       await this._ensureDependencies()
       if (this.payloadIndexMemo.has(collectionName)) return
@@ -1286,6 +1296,15 @@ export class RagService {
     source: string,
     collectionInput: string | null
   ): Promise<{ success: boolean; message: string }> {
+    return this.collectionMutationQueue.run(async () => {
+      return this.updateFileCollectionSerial(source, collectionInput)
+    })
+  }
+
+  private async updateFileCollectionSerial(
+    source: string,
+    collectionInput: string | null
+  ): Promise<{ success: boolean; message: string }> {
     try {
       const collection = normalizeKnowledgeCollection(collectionInput)
       const row = await KbIngestState.query().where('file_path', source).first()
@@ -1330,6 +1349,15 @@ export class RagService {
     oldNameInput: string,
     newNameInput: string
   ): Promise<{ success: boolean; message: string }> {
+    return this.collectionMutationQueue.run(async () => {
+      return this.renameKnowledgeCollectionSerial(oldNameInput, newNameInput)
+    })
+  }
+
+  private async renameKnowledgeCollectionSerial(
+    oldNameInput: string,
+    newNameInput: string
+  ): Promise<{ success: boolean; message: string }> {
     try {
       const oldName = normalizeKnowledgeCollection(oldNameInput)
       const newName = normalizeKnowledgeCollection(newNameInput)
@@ -1364,6 +1392,14 @@ export class RagService {
 
   /** Remove only a grouping label. Files, points, and embeddings are retained. */
   public async deleteKnowledgeCollection(
+    nameInput: string
+  ): Promise<{ success: boolean; message: string }> {
+    return this.collectionMutationQueue.run(async () => {
+      return this.deleteKnowledgeCollectionSerial(nameInput)
+    })
+  }
+
+  private async deleteKnowledgeCollectionSerial(
     nameInput: string
   ): Promise<{ success: boolean; message: string }> {
     try {

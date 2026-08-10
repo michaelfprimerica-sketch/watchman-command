@@ -4,6 +4,8 @@ import {
   assignCollectionPayload,
   ensureKnowledgePayloadIndexes,
   exactCollectionFilter,
+  KnowledgeCollectionMutationQueue,
+  QdrantCollectionInitializationGate,
   renameCollectionPayload,
   sourceHasEmbeddedPoints,
 } from '../../app/utils/knowledge_collection_qdrant.js'
@@ -135,5 +137,69 @@ describe('Knowledge Collection Qdrant contract', () => {
     memo.reset()
     await ensureKnowledgePayloadIndexes(client, memo, 'knowledge')
     assert.equal(fields.length, 9)
+  })
+
+  it('coalesces concurrent collection initialization and retries after failure', async () => {
+    const gate = new QdrantCollectionInitializationGate()
+    let calls = 0
+    let release!: () => void
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const initialize = async () => {
+      calls++
+      await blocked
+    }
+
+    const first = gate.run('knowledge', initialize)
+    const second = gate.run('knowledge', initialize)
+    await Promise.resolve()
+    assert.equal(calls, 1)
+    release()
+    await Promise.all([first, second])
+
+    await assert.rejects(
+      gate.run('retry', async () => {
+        throw new Error('temporary failure')
+      }),
+      /temporary failure/
+    )
+    await gate.run('retry', async () => {
+      calls++
+    })
+    assert.equal(calls, 2)
+  })
+
+  it('serializes collection mutations and a failure does not poison the queue', async () => {
+    const queue = new KnowledgeCollectionMutationQueue()
+    const events: string[] = []
+    let release!: () => void
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve
+    })
+
+    const first = queue.run(async () => {
+      events.push('first:start')
+      await blocked
+      events.push('first:end')
+      return 'first'
+    })
+    const second = queue.run(async () => {
+      events.push('second')
+      return 'second'
+    })
+    await Promise.resolve()
+    assert.deepEqual(events, ['first:start'])
+    release()
+    assert.deepEqual(await Promise.all([first, second]), ['first', 'second'])
+    assert.deepEqual(events, ['first:start', 'first:end', 'second'])
+
+    await assert.rejects(
+      queue.run(async () => {
+        throw new Error('mutation failed')
+      }),
+      /mutation failed/
+    )
+    assert.equal(await queue.run(async () => 'recovered'), 'recovered')
   })
 })

@@ -27,6 +27,40 @@ export interface PointCountClient {
 
 export const KNOWLEDGE_PAYLOAD_INDEXES = ['source', 'content_type', 'collection'] as const
 
+/** Coalesce concurrent initialization of the same Qdrant collection. */
+export class QdrantCollectionInitializationGate {
+  private readonly inFlight = new Map<string, Promise<void>>()
+
+  run(collectionName: string, initialize: () => Promise<void>): Promise<void> {
+    const existing = this.inFlight.get(collectionName)
+    if (existing) return existing
+
+    // Defer initialize until after the promise is registered so a synchronous
+    // second caller cannot pass the gate before the first operation is visible.
+    const pending = Promise.resolve().then(initialize)
+    this.inFlight.set(collectionName, pending)
+    const cleanup = () => {
+      if (this.inFlight.get(collectionName) === pending) this.inFlight.delete(collectionName)
+    }
+    void pending.then(cleanup, cleanup)
+    return pending
+  }
+}
+
+/** Serialize relational + Qdrant mutations in the single Watchman admin process. */
+export class KnowledgeCollectionMutationQueue {
+  private tail: Promise<void> = Promise.resolve()
+
+  run<T>(mutation: () => Promise<T>): Promise<T> {
+    const result = this.tail.then(mutation, mutation)
+    this.tail = result.then(
+      () => undefined,
+      () => undefined
+    )
+    return result
+  }
+}
+
 export async function ensureKnowledgePayloadIndexes(
   client: PayloadIndexClient,
   memo: QdrantIndexMemo,
