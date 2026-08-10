@@ -163,7 +163,8 @@ export default class OllamaController {
         : false
 
       // UI-only routing fields must never be forwarded to the model provider.
-      const { sessionId, collection: _collection, ...ollamaRequest } = reqData
+      const { sessionId, collection: collectionRoutingField, ...ollamaRequest } = reqData
+      void collectionRoutingField
 
       // Save user message to DB before streaming if sessionId provided
       let userContent: string | null = null

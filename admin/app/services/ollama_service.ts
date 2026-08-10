@@ -240,7 +240,7 @@ export class OllamaService {
                 }
 
                 const percent =
-                  aggTotal > 0 ? parseFloat(((aggCompleted / aggTotal) * 100).toFixed(2)) : 0
+                  aggTotal > 0 ? Number.parseFloat(((aggCompleted / aggTotal) * 100).toFixed(2)) : 0
 
                 // Throttle broadcasts. Always call the progressCallback though — the worker
                 // uses it to update job state in Redis, which should reflect the latest view.

@@ -172,17 +172,17 @@ export class RagService {
    * - Control characters (except newlines, tabs, and carriage returns)
    */
   private sanitizeText(text: string): string {
-    return (
-      text
-        // Null bytes
-        .replace(/\x00/g, '')
-        // Problematic control characters (keep \n, \r, \t)
-        .replace(/[\x01-\x08\x0B-\x0C\x0E-\x1F\x7F]/g, '')
-        // Invalid Unicode surrogates
-        .replace(/[\uD800-\uDFFF]/g, '')
-        // Trim extra whitespace
-        .trim()
-    )
+    return [...text]
+      .filter((character) => {
+        const codePoint = character.codePointAt(0)!
+        const isAllowedWhitespace = codePoint === 0x09 || codePoint === 0x0a || codePoint === 0x0d
+        const isControlCharacter = codePoint <= 0x1f || codePoint === 0x7f
+        const isUnpairedSurrogate = codePoint >= 0xd800 && codePoint <= 0xdfff
+
+        return (!isControlCharacter || isAllowedWhitespace) && !isUnpairedSurrogate
+      })
+      .join('')
+      .trim()
   }
 
   /**
