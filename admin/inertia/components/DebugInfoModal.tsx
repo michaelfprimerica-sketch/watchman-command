@@ -19,18 +19,20 @@ export default function DebugInfoModal({ open, onClose }: DebugInfoModalProps) {
     setLoading(true)
     setCopied(false)
 
-    api.getDebugInfo().then((text) => {
-      if (text) {
-        const browserLine = `Browser: ${navigator.userAgent}`
-        setDebugText(text + '\n' + browserLine)
-      } else {
+    api
+      .getDebugInfo()
+      .then((text) => {
+        if (text) {
+          setDebugText(text)
+        } else {
+          setDebugText('Failed to load debug info. Please try again.')
+        }
+        setLoading(false)
+      })
+      .catch(() => {
         setDebugText('Failed to load debug info. Please try again.')
-      }
-      setLoading(false)
-    }).catch(() => {
-      setDebugText('Failed to load debug info. Please try again.')
-      setLoading(false)
-    })
+        setLoading(false)
+      })
   }, [open])
 
   const handleCopy = async () => {
@@ -58,8 +60,8 @@ export default function DebugInfoModal({ open, onClose }: DebugInfoModalProps) {
       onCancel={onClose}
     >
       <p className="text-sm text-gray-500 mb-3 text-left">
-        This is non-sensitive system info you can share when reporting issues.
-        No passwords, IPs, or API keys are included.
+        This is non-sensitive system info you can share when reporting issues. No passwords, IPs, or
+        API keys are included.
       </p>
 
       <textarea

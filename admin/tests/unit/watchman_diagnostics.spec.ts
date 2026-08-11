@@ -61,11 +61,16 @@ test('builds a conservative Watchman diagnostic snapshot', () => {
 test('redacts secrets, credentials, private paths, network identifiers, and private keys', () => {
   const unsafe = [
     'password=hunter2',
+    'APP_KEY=generated-app-key',
     'token: abc.def',
+    'Authorization: Bearer top-secret-bearer',
     'mysql://watchman:dbpass@mysql/private',
     '/home/alice/private/config.json',
+    '/root/.ollama/id_ed25519',
     'C:\\Users\\Alice\\watchman\\secret.txt',
+    'Hostname: command-post.local',
     'host=192.168.10.42',
+    'ipv6=2001:db8::1',
     'mac=AA:BB:CC:DD:EE:FF',
     '-----BEGIN PRIVATE KEY-----\nprivate-material\n-----END PRIVATE KEY-----',
   ].join('\n')
@@ -73,11 +78,15 @@ test('redacts secrets, credentials, private paths, network identifiers, and priv
   const redacted = redactDiagnosticText(unsafe)
   for (const secret of [
     'hunter2',
+    'generated-app-key',
     'abc.def',
+    'top-secret-bearer',
     'dbpass',
     'alice',
     'Alice',
+    'command-post.local',
     '192.168.10.42',
+    '2001:db8::1',
     'AA:BB:CC:DD:EE:FF',
     'private-material',
   ]) {

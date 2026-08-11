@@ -57,14 +57,19 @@ const safeToken = (value: string, fallback = 'unknown') => {
 export function redactDiagnosticText(input: string): string {
   return input
     .replace(/-----BEGIN [^-]+-----[\s\S]*?-----END [^-]+-----/gi, '[REDACTED PRIVATE KEY]')
+    .replace(/^\s*(?:hostname|host)\s*[:=]\s*[^\r\n]+$/gim, 'Hostname: [REDACTED]')
+    .replace(/\bauthorization\b\s*[:=]\s*[^\r\n]+/gi, 'authorization: [REDACTED]')
+    .replace(/\bbearer\s+[^\s,;]+/gi, 'Bearer [REDACTED]')
     .replace(
-      /\b(password|passwd|token|api[_-]?key|secret|authorization|bearer|private[_-]?key)\b\s*[:=]\s*[^\s,;]+/gi,
+      /\b(password|passwd|token|api[_-]?key|app[_-]?key|secret|private[_-]?key)\b\s*[:=]\s*[^\s,;]+/gi,
       '$1: [REDACTED]'
     )
     .replace(/\b(?:mysql|postgres(?:ql)?|redis):\/\/[^\s@]+@[^\s]+/gi, '[REDACTED DATABASE URL]')
     .replace(/\b[A-Z]:\\Users\\[^\s\\]+(?:\\[^\s]*)?/gi, '[PRIVATE PATH]')
-    .replace(/\/home\/[^\s/]+(?:\/[^\s]*)?/g, '[PRIVATE PATH]')
+    .replace(/\/(?:home|Users)\/[^\s/]+(?:\/[^\s]*)?/g, '[PRIVATE PATH]')
+    .replace(/\/root\/(?:\.ollama|\.ssh|\.config)(?:\/[^\s]*)?/g, '[PRIVATE PATH]')
     .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[REDACTED IP]')
+    .replace(/\b(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}\b/gi, '[REDACTED IP]')
     .replace(/\b(?:[0-9A-F]{2}:){5}[0-9A-F]{2}\b/gi, '[REDACTED MAC]')
 }
 
