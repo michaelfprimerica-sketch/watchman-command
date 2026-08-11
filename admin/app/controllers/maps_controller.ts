@@ -35,22 +35,27 @@ export default class MapsController {
     })
   }
 
-  async downloadBaseAssets({ request }: HttpContext) {
+  async downloadBaseAssets({ request, response }: HttpContext) {
     const payload = await request.validateUsing(remoteDownloadValidatorOptional)
     if (payload.url) assertNotPrivateUrl(payload.url)
-    await this.mapService.downloadBaseAssets(payload.url)
-    return { success: true }
-  }
-
-  async setupWorldBasemap({ response }: HttpContext) {
+    let ready = false
     try {
-      if (await this.mapService.provisionWorldBasemap()) return { success: true }
+      if (payload.url) {
+        ready = await this.mapService.downloadBaseAssets(payload.url)
+      } else {
+        const baseAssetsReady = await this.mapService.ensureBaseAssets()
+        const basemap = await this.mapService.getOfflineBasemapDiagnostic(false)
+        ready = baseAssetsReady && basemap.status === 'available'
+      }
     } catch {
-      // The response intentionally omits internal paths and command errors.
+      // Return only a stable, path-free error below.
     }
-    return response.status(503).send({
-      message: 'The offline basemap could not be prepared. Check storage health and connectivity.',
-    })
+    if (!ready) {
+      return response.status(503).send({
+        message: 'The offline map assets could not be prepared. Check storage and connectivity.',
+      })
+    }
+    return { success: true }
   }
 
   async downloadRemote({ request }: HttpContext) {

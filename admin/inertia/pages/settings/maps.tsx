@@ -77,7 +77,7 @@ export default function MapsManager(props: {
 
   const setupWorldBasemap = useMutation({
     mutationFn: async () => {
-      const result = await api.setupWorldBasemap()
+      const result = await api.downloadBaseMapAssets()
       if (!result?.success) throw new Error('Offline basemap setup failed')
       return result
     },

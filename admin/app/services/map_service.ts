@@ -423,18 +423,6 @@ export class MapService implements IMapService {
     return { status, regionalMapsPresent }
   }
 
-  /** Explicitly provision a missing basemap while preserving unreadable or corrupt files. */
-  async provisionWorldBasemap(): Promise<boolean> {
-    const regions = await this.listRegions()
-    const before = await this.getOfflineBasemapDiagnostic(regions.files.length > 0)
-    if (before.status === 'available') return true
-    if (before.status !== 'missing') return false
-
-    await this.ensureWorldBasemap()
-    const after = await this.getOfflineBasemapDiagnostic(regions.files.length > 0)
-    return after.status === 'available'
-  }
-
   /**
    * Extract a low-zoom global basemap once so the map isn't grey outside a
    * regional extract's polygon. Cheap (~15 MB, a handful of HTTP range
