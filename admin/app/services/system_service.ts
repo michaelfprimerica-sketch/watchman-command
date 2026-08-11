@@ -22,6 +22,15 @@ import KVStore from '#models/kv_store'
 import { KV_STORE_SCHEMA, KVStoreKey } from '../../types/kv_store.js'
 import { isNewerVersion } from '../utils/version.js'
 import { invalidateAssistantNameCache } from '../../config/inertia.js'
+import { KiwixLibraryService } from '#services/kiwix_library_service'
+import { access, statfs } from 'node:fs/promises'
+import { constants, existsSync } from 'node:fs'
+import {
+  bestEffort,
+  buildWatchmanDiagnosticReport,
+  DiagnosticStatus,
+  serviceDiagnosticStatus,
+} from '../utils/watchman_diagnostics.js'
 
 @inject()
 export class SystemService {
@@ -139,7 +148,14 @@ export class SystemService {
       const startedAtMs = startedAtRaw ? new Date(startedAtRaw).getTime() : NaN
       const hasValidStartedAt = Number.isFinite(startedAtMs) && startedAtMs > 0
 
-      const logsOpts: { stdout: true; stderr: true; follow: false; since?: number; until?: number; tail?: number } = {
+      const logsOpts: {
+        stdout: true
+        stderr: true
+        follow: false
+        since?: number
+        until?: number
+        tail?: number
+      } = {
         stdout: true,
         stderr: true,
         follow: false,
@@ -169,9 +185,7 @@ export class SystemService {
 
       return {
         library: libraryMatch[1] as 'CUDA' | 'ROCm',
-        name:
-          descMatch?.[1] ||
-          (libraryMatch[1] === 'CUDA' ? 'NVIDIA GPU' : 'AMD GPU'),
+        name: descMatch?.[1] || (libraryMatch[1] === 'CUDA' ? 'NVIDIA GPU' : 'AMD GPU'),
         vramMiB: totalMatch ? Math.round(Number.parseFloat(totalMatch[1]) * 1024) : 0,
       }
     } catch (error) {
@@ -280,7 +294,8 @@ export class SystemService {
         }
       }
 
-      const ollamaUrl = remoteOllamaUrl || (await this.dockerService.getServiceURL(SERVICE_NAMES.OLLAMA))
+      const ollamaUrl =
+        remoteOllamaUrl || (await this.dockerService.getServiceURL(SERVICE_NAMES.OLLAMA))
       if (!ollamaUrl) {
         return null
       }
@@ -501,11 +516,7 @@ export class SystemService {
 
         // Run the probes when controllers are empty (common inside Docker) or
         // when lspci gave us bogus discrete-GPU BAR0 values that need replacing.
-        if (
-          !graphics.controllers ||
-          graphics.controllers.length === 0 ||
-          hasLspciBogusDgpuVram
-        ) {
+        if (!graphics.controllers || graphics.controllers.length === 0 || hasLspciBogusDgpuVram) {
           const runtimes = dockerInfo.Runtimes || {}
           gpuHealth.hasNvidiaRuntime = 'nvidia' in runtimes
 
@@ -514,7 +525,9 @@ export class SystemService {
           //   2. Marker file at /app/storage/.nomad-gpu-type (written by install_nomad.sh)
           // The marker file matters because the System page should reflect AMD presence
           // even before AI Assistant has been installed for the first time.
-          let savedGpuType: string | null | undefined = await KVStore.getValue('gpu.type') as string | undefined
+          let savedGpuType: string | null | undefined = (await KVStore.getValue('gpu.type')) as
+            | string
+            | undefined
           if (!savedGpuType) {
             try {
               savedGpuType = (await readFile('/app/storage/.nomad-gpu-type', 'utf8')).trim()
@@ -747,114 +760,109 @@ export class SystemService {
   }
 
   async getDebugInfo(): Promise<string> {
-    const appVersion = SystemService.getAppVersion()
-    const environment = process.env.NODE_ENV || 'unknown'
-
-    const [systemInfo, services, internetStatus, versionCheck] = await Promise.all([
-      this.getSystemInfo(),
-      this.getServices({ installedOnly: false }),
-      this.getInternetStatus().catch(() => null),
-      this.checkLatestVersion().catch(() => null),
+    const storagePath = join(process.cwd(), '/storage')
+    const [systemInfo, services, internetStatus, dockerRuntime, storage] = await Promise.all([
+      bestEffort(() => this.getSystemInfo(), undefined),
+      bestEffort(() => this.getServices({ installedOnly: false }), null),
+      bestEffort(() => this.getInternetStatus(), null),
+      bestEffort<{
+        status: DiagnosticStatus
+        version: string | null
+        composeDetected: boolean
+        watchmanContainerCount: number | null
+      }>(
+        async () => {
+          const [version, containers] = await Promise.all([
+            this.dockerService.docker.version(),
+            this.dockerService.docker.listContainers({ all: false }),
+          ])
+          const watchmanContainers = containers.filter(
+            (container) =>
+              container.Labels?.['com.docker.compose.project'] === 'watchman-command' ||
+              container.Image.startsWith('watchman-command-')
+          )
+          return {
+            status: 'AVAILABLE' as DiagnosticStatus,
+            version: version?.Version ?? null,
+            composeDetected: watchmanContainers.some(
+              (container) => container.Labels?.['com.docker.compose.project'] === 'watchman-command'
+            ),
+            watchmanContainerCount: watchmanContainers.length,
+          }
+        },
+        {
+          status: 'UNAVAILABLE' as DiagnosticStatus,
+          version: null,
+          composeDetected: false,
+          watchmanContainerCount: null,
+        }
+      ),
+      bestEffort<{ status: DiagnosticStatus; freeBytes: number | null }>(
+        async () => {
+          await access(storagePath, constants.R_OK | constants.W_OK)
+          const filesystem = await statfs(storagePath)
+          return {
+            status: 'AVAILABLE' as DiagnosticStatus,
+            freeBytes: Number(filesystem.bavail) * Number(filesystem.bsize),
+          }
+        },
+        { status: 'UNAVAILABLE' as DiagnosticStatus, freeBytes: null }
+      ),
     ])
 
-    const lines: string[] = [
-      'Project NOMAD Debug Info',
-      '========================',
-      `App Version: ${appVersion}`,
-      `Environment: ${environment}`,
-    ]
+    const findService = (name: string) => services?.find((service) => service.service_name === name)
+    const serviceStatus = (name: string): DiagnosticStatus => {
+      if (services === null) return 'UNKNOWN'
+      const service = findService(name)
+      return serviceDiagnosticStatus(service?.installed, service?.status)
+    }
 
-    if (systemInfo) {
-      const { cpu, mem, os, disk, fsSize, uptime, graphics } = systemInfo
+    const kiwixStatus = serviceStatus(SERVICE_NAMES.KIWIX)
+    const kiwixBookCount =
+      kiwixStatus === 'AVAILABLE' || kiwixStatus === 'DEGRADED'
+        ? await bestEffort<number | null>(() => new KiwixLibraryService().getBookCount(), null)
+        : null
 
-      lines.push('')
-      lines.push('System:')
-      if (os.distro) lines.push(`  OS: ${os.distro}`)
-      if (os.hostname) lines.push(`  Hostname: ${os.hostname}`)
-      if (os.kernel) lines.push(`  Kernel: ${os.kernel}`)
-      if (os.arch) lines.push(`  Architecture: ${os.arch}`)
-      if (uptime?.uptime) lines.push(`  Uptime: ${this._formatUptime(uptime.uptime)}`)
-
-      lines.push('')
-      lines.push('Hardware:')
-      if (cpu.brand) {
-        lines.push(`  CPU: ${cpu.brand} (${cpu.cores} cores)`)
-      }
-      if (mem.total) {
-        const total = this._formatBytes(mem.total)
-        const used = this._formatBytes(mem.total - (mem.available || 0))
-        const available = this._formatBytes(mem.available || 0)
-        lines.push(`  RAM: ${total} total, ${used} used, ${available} available`)
-      }
-      if (graphics.controllers && graphics.controllers.length > 0) {
-        for (const gpu of graphics.controllers) {
-          const vram = gpu.vram ? ` (${gpu.vram} MB VRAM)` : ''
-          lines.push(`  GPU: ${gpu.model}${vram}`)
-        }
-      } else {
-        lines.push('  GPU: None detected')
-      }
-
-      // Disk info — try disk array first, fall back to fsSize
-      const diskEntries = disk.filter((d) => d.totalSize > 0)
-      if (diskEntries.length > 0) {
-        for (const d of diskEntries) {
-          const size = this._formatBytes(d.totalSize)
-          const type = d.tran?.toUpperCase() || (d.rota ? 'HDD' : 'SSD')
-          lines.push(`  Disk: ${size}, ${Math.round(d.percentUsed)}% used, ${type}`)
-        }
-      } else if (fsSize.length > 0) {
-        const realFs = fsSize.filter((f) => f.fs.startsWith('/dev/'))
-        const seen = new Set<number>()
-        for (const f of realFs) {
-          if (seen.has(f.size)) continue
-          seen.add(f.size)
-          lines.push(`  Disk: ${this._formatBytes(f.size)}, ${Math.round(f.use)}% used`)
-        }
+    let gpuStatus: DiagnosticStatus = 'UNKNOWN'
+    let gpuVendor: 'AMD' | 'NVIDIA' | null = null
+    if (systemInfo?.gpuHealth) {
+      const health = systemInfo.gpuHealth
+      gpuVendor =
+        health.gpuVendor === 'amd' ? 'AMD' : health.gpuVendor === 'nvidia' ? 'NVIDIA' : null
+      if (health.status === 'ok') gpuStatus = 'AVAILABLE'
+      else if (health.status === 'passthrough_failed') gpuStatus = 'UNAVAILABLE'
+      else if (health.status === 'no_gpu' || health.status === 'ollama_not_installed') {
+        gpuStatus = 'NOT INSTALLED'
       }
     }
 
-    const installed = services.filter((s) => s.installed)
-    lines.push('')
-    if (installed.length > 0) {
-      lines.push('Installed Services:')
-      for (const svc of installed) {
-        lines.push(`  ${svc.friendly_name} (${svc.service_name}): ${svc.status}`)
-      }
-    } else {
-      lines.push('Installed Services: None')
-    }
+    const runningManagedServices = services?.filter(
+      (service) => service.installed && service.status?.toLowerCase() === 'running'
+    ).length
+    const activeManagedContainers =
+      dockerRuntime.watchmanContainerCount === null
+        ? null
+        : Math.max(dockerRuntime.watchmanContainerCount, runningManagedServices ?? 0)
 
-    if (internetStatus !== null) {
-      lines.push('')
-      lines.push(`Internet Status: ${internetStatus ? 'Online' : 'Offline'}`)
-    }
-
-    if (versionCheck?.success) {
-      const updateMsg = versionCheck.updateAvailable
-        ? `Yes (${versionCheck.latestVersion} available)`
-        : `No (${versionCheck.currentVersion} is latest)`
-      lines.push(`Update Available: ${updateMsg}`)
-    }
-
-    return lines.join('\n')
-  }
-
-  private _formatUptime(seconds: number): string {
-    const days = Math.floor(seconds / 86400)
-    const hours = Math.floor((seconds % 86400) / 3600)
-    const minutes = Math.floor((seconds % 3600) / 60)
-    if (days > 0) return `${days}d ${hours}h ${minutes}m`
-    if (hours > 0) return `${hours}h ${minutes}m`
-    return `${minutes}m`
-  }
-
-  private _formatBytes(bytes: number, decimals = 1): string {
-    if (bytes === 0) return '0 Bytes'
-    const k = 1024
-    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB']
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return Number.parseFloat((bytes / Math.pow(k, i)).toFixed(decimals)) + ' ' + sizes[i]
+    return buildWatchmanDiagnosticReport({
+      version: SystemService.getAppVersion(),
+      environment: process.env.NODE_ENV || 'unknown',
+      architecture: systemInfo?.os.arch || process.arch,
+      runtime: existsSync('/.dockerenv') ? 'Watchman Docker container' : 'Watchman host process',
+      wslDistribution: process.env.WSL_DISTRO_NAME || null,
+      docker: { status: dockerRuntime.status, version: dockerRuntime.version },
+      compose: { status: dockerRuntime.composeDetected ? 'AVAILABLE' : 'UNKNOWN' },
+      storage,
+      kiwix: {
+        status: kiwixBookCount === null && kiwixStatus === 'AVAILABLE' ? 'DEGRADED' : kiwixStatus,
+        bookCount: kiwixBookCount,
+      },
+      qdrant: { status: serviceStatus(SERVICE_NAMES.QDRANT) },
+      ollama: { status: serviceStatus(SERVICE_NAMES.OLLAMA) },
+      gpu: { status: gpuStatus, vendor: gpuVendor },
+      activeManagedContainers,
+      internet: internetStatus === null ? 'UNKNOWN' : internetStatus ? 'AVAILABLE' : 'UNAVAILABLE',
+    })
   }
 
   async updateSetting(key: KVStoreKey, value: any): Promise<void> {
