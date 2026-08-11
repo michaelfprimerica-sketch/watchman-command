@@ -32,6 +32,7 @@ test('uses Watchman wording, reports regional-only operation, and never includes
   assert.match(notice?.message ?? '', /regional map files may still be available/i)
   assert.doesNotMatch(notice?.message ?? '', /(?:\/storage|[A-Z]:\\|pmtiles\/)/)
   assert.equal(notice?.canDownload, true)
+  assert.equal(notice?.takesPriority, false)
 })
 
 test('returns consistent non-download notices for corrupt, unreadable, storage, and service failures', () => {
@@ -44,6 +45,7 @@ test('returns consistent non-download notices for corrupt, unreadable, storage, 
     const notice = getOfflineBasemapNotice({ status, regionalMapsPresent: false })
     assert.ok(notice)
     assert.equal(notice.canDownload, false)
+    assert.equal(notice.takesPriority, true)
   }
   assert.equal(getOfflineBasemapNotice({ status: 'available', regionalMapsPresent: false }), null)
 })

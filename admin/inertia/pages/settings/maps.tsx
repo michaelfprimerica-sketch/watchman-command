@@ -70,6 +70,10 @@ export default function MapsManager(props: {
     props.maps.regionFiles
   )
   const basemapNotice = getOfflineBasemapNotice(props.maps.offlineBasemap)
+  const activeBasemapNotice =
+    basemapNotice && (props.maps.baseAssetsExist || basemapNotice.takesPriority)
+      ? basemapNotice
+      : null
 
   const setupWorldBasemap = useMutation({
     mutationFn: async () => {
@@ -320,7 +324,7 @@ export default function MapsManager(props: {
             </div>
             <div className="flex space-x-4"></div>
           </div>
-          {!props.maps.baseAssetsExist && (
+          {!props.maps.baseAssetsExist && !activeBasemapNotice && (
             <Alert
               title="The base map assets have not been installed. Please download them first to enable map functionality."
               type="warning"
@@ -335,15 +339,15 @@ export default function MapsManager(props: {
               }}
             />
           )}
-          {props.maps.baseAssetsExist && basemapNotice && (
+          {activeBasemapNotice && (
             <Alert
-              title={basemapNotice.title}
-              message={basemapNotice.message}
+              title={activeBasemapNotice.title}
+              message={activeBasemapNotice.message}
               type="warning"
               variant="solid"
               className="my-4"
               buttonProps={
-                basemapNotice.canDownload
+                activeBasemapNotice.canDownload
                   ? {
                       variant: 'secondary',
                       children: 'Prepare Offline Basemap',

@@ -4,6 +4,7 @@ export type OfflineBasemapNotice = {
   title: string
   message: string
   canDownload: boolean
+  takesPriority: boolean
 }
 
 export function getOfflineBasemapNotice(
@@ -23,6 +24,7 @@ export function getOfflineBasemapNotice(
           'The low-zoom world basemap has not been downloaded. Connect Watchman Command to the internet once to prepare it for offline use.' +
           regionalSuffix,
         canDownload: true,
+        takesPriority: false,
       }
     case 'corrupt':
       return {
@@ -31,6 +33,7 @@ export function getOfflineBasemapNotice(
           'The world basemap file is not valid. Watchman Command left it unchanged.' +
           regionalSuffix,
         canDownload: false,
+        takesPriority: true,
       }
     case 'unreadable':
       return {
@@ -39,18 +42,21 @@ export function getOfflineBasemapNotice(
           'Watchman Command cannot read the world basemap. Check storage permissions.' +
           regionalSuffix,
         canDownload: false,
+        takesPriority: true,
       }
     case 'storage_unavailable':
       return {
         title: 'Map storage unavailable',
         message: 'Watchman Command cannot access map storage.' + regionalSuffix,
         canDownload: false,
+        takesPriority: true,
       }
     case 'service_unavailable':
       return {
         title: 'Map service unavailable',
         message: 'Watchman Command could not check offline map health.' + regionalSuffix,
         canDownload: false,
+        takesPriority: true,
       }
   }
 }

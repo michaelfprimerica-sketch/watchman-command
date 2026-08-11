@@ -22,13 +22,18 @@ export default function Maps(props: {
   const [showMapCoordinates, setShowMapCoordinates] = useState(true)
 
   const basemapNotice = getOfflineBasemapNotice(props.maps.offlineBasemap)
-  const alertMessage = !props.maps.baseAssetsExist
-    ? 'The base map assets have not been installed. Please download them first to enable map functionality.'
-    : (basemapNotice?.message ??
-      (props.maps.regionFiles.length === 0
+  const activeBasemapNotice =
+    basemapNotice && (props.maps.baseAssetsExist || basemapNotice.takesPriority)
+      ? basemapNotice
+      : null
+  const alertMessage = activeBasemapNotice
+    ? activeBasemapNotice.message
+    : !props.maps.baseAssetsExist
+      ? 'The base map assets have not been installed. Please download them first to enable map functionality.'
+      : props.maps.regionFiles.length === 0
         ? 'No map regions have been downloaded yet. Please download some regions to enable map functionality.'
-        : null))
-  const alertTitle = basemapNotice?.title ?? alertMessage
+        : null
+  const alertTitle = activeBasemapNotice?.title ?? alertMessage
 
   return (
     <MapsLayout>
@@ -72,7 +77,7 @@ export default function Maps(props: {
           >
             <Alert
               title={alertTitle ?? undefined}
-              message={basemapNotice ? alertMessage : undefined}
+              message={activeBasemapNotice ? alertMessage : undefined}
               type="warning"
               variant="solid"
               className="w-full"
