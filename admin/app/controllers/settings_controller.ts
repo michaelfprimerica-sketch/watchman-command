@@ -44,11 +44,18 @@ export default class SettingsController {
   }
 
   async maps({ inertia }: HttpContext) {
-    const baseAssetsCheck = await this.mapService.ensureBaseAssets()
-    const regionFiles = await this.mapService.listRegions()
+    const baseAssetsCheck = await this.mapService.ensureBaseAssets().catch(() => false)
+    const regionFiles = await this.mapService.listRegions().catch(() => ({ files: [] }))
+    const offlineBasemap = await this.mapService
+      .getOfflineBasemapDiagnostic(regionFiles.files.length > 0)
+      .catch(() => ({
+        status: 'service_unavailable' as const,
+        regionalMapsPresent: regionFiles.files.length > 0,
+      }))
     return inertia.render('settings/maps', {
       maps: {
         baseAssetsExist: baseAssetsCheck,
+        offlineBasemap,
         regionFiles: regionFiles.files,
       },
     })
@@ -125,9 +132,9 @@ export default class SettingsController {
   }
 
   async getSetting({ request, response }: HttpContext) {
-    const { key } = await getSettingSchema.validate({ key: request.qs().key });
-    const value = await KVStore.getValue(key);
-    return response.status(200).send({ key, value });
+    const { key } = await getSettingSchema.validate({ key: request.qs().key })
+    const value = await KVStore.getValue(key)
+    return response.status(200).send({ key, value })
   }
 
   async updateSetting({ request, response }: HttpContext) {

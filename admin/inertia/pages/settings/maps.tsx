@@ -19,12 +19,18 @@ import ActiveDownloads from '~/components/ActiveDownloads'
 import Alert from '~/components/Alert'
 import { formatBytes } from '~/lib/util'
 import { hasDownloadedGlobalMap } from '~/lib/global_map_banner'
+import { getOfflineBasemapNotice } from '~/lib/offline_basemap'
+import type { OfflineBasemapDiagnostic } from '../../../types/maps'
 
 const CURATED_COLLECTIONS_KEY = 'curated-map-collections'
 const GLOBAL_MAP_INFO_KEY = 'global-map-info'
 
 export default function MapsManager(props: {
-  maps: { baseAssetsExist: boolean; regionFiles: FileEntry[] }
+  maps: {
+    baseAssetsExist: boolean
+    offlineBasemap: OfflineBasemapDiagnostic
+    regionFiles: FileEntry[]
+  }
 }) {
   const queryClient = useQueryClient()
   const { openModal, closeAllModals } = useModals()
@@ -59,7 +65,29 @@ export default function MapsManager(props: {
     queryFn: () => api.getGlobalMapInfo(),
     refetchOnWindowFocus: false,
   })
-  const globalMapAlreadyDownloaded = hasDownloadedGlobalMap(globalMapInfo?.key, props.maps.regionFiles)
+  const globalMapAlreadyDownloaded = hasDownloadedGlobalMap(
+    globalMapInfo?.key,
+    props.maps.regionFiles
+  )
+  const basemapNotice = getOfflineBasemapNotice(props.maps.offlineBasemap)
+
+  const setupWorldBasemap = useMutation({
+    mutationFn: async () => {
+      const result = await api.setupWorldBasemap()
+      if (!result?.success) throw new Error('Offline basemap setup failed')
+      return result
+    },
+    onSuccess: () => {
+      addNotification({ type: 'success', message: 'Offline basemap prepared successfully.' })
+      router.reload({ only: ['maps'] })
+    },
+    onError: () => {
+      addNotification({
+        type: 'error',
+        message: 'The offline basemap could not be prepared. Check storage and connectivity.',
+      })
+    },
+  })
 
   const downloadGlobalMap = useMutation({
     mutationFn: () => api.downloadGlobalMap(),
@@ -67,7 +95,8 @@ export default function MapsManager(props: {
       invalidateDownloads()
       addNotification({
         type: 'success',
-        message: 'Global map download has been queued. This is a large file (~125 GB) and may take a while.',
+        message:
+          'Global map download has been queued. This is a large file (~125 GB) and may take a while.',
       })
       closeAllModals()
     },
@@ -224,9 +253,9 @@ export default function MapsManager(props: {
         confirmLoading={downloadGlobalMap.isPending}
       >
         <p className="text-text-secondary">
-          This will download the full Protomaps global map ({formatBytes(globalMapInfo.size, 1)}, build {globalMapInfo.date}).
-          Covers the entire planet so you won't need individual region files.
-          Make sure you have enough disk space.
+          This will download the full Protomaps global map ({formatBytes(globalMapInfo.size, 1)},
+          build {globalMapInfo.date}). Covers the entire planet so you won't need individual region
+          files. Make sure you have enough disk space.
         </p>
       </StyledModal>,
       'confirm-global-map-download-modal'
@@ -285,11 +314,11 @@ export default function MapsManager(props: {
           <div className="flex items-center justify-between">
             <div className="flex flex-col">
               <h1 className="text-4xl font-semibold mb-2">Maps Manager</h1>
-              <p className="text-text-muted">Manage your stored map files and explore new regions!</p>
+              <p className="text-text-muted">
+                Manage your stored map files and explore new regions!
+              </p>
             </div>
-            <div className="flex space-x-4">
-
-            </div>
+            <div className="flex space-x-4"></div>
           </div>
           {!props.maps.baseAssetsExist && (
             <Alert
@@ -304,6 +333,26 @@ export default function MapsManager(props: {
                 loading: downloading,
                 onClick: () => downloadBaseAssets(),
               }}
+            />
+          )}
+          {props.maps.baseAssetsExist && basemapNotice && (
+            <Alert
+              title={basemapNotice.title}
+              message={basemapNotice.message}
+              type="warning"
+              variant="solid"
+              className="my-4"
+              buttonProps={
+                basemapNotice.canDownload
+                  ? {
+                      variant: 'secondary',
+                      children: 'Prepare Offline Basemap',
+                      icon: 'IconCloudDownload',
+                      loading: setupWorldBasemap.isPending,
+                      onClick: () => setupWorldBasemap.mutate(),
+                    }
+                  : undefined
+              }
             />
           )}
           {globalMapInfo && globalMapAlreadyDownloaded && (

@@ -18,11 +18,18 @@ export default class MapsController {
   constructor(private mapService: MapService) {}
 
   async index({ inertia }: HttpContext) {
-    const baseAssetsCheck = await this.mapService.ensureBaseAssets()
-    const regionFiles = await this.mapService.listRegions()
+    const baseAssetsCheck = await this.mapService.ensureBaseAssets().catch(() => false)
+    const regionFiles = await this.mapService.listRegions().catch(() => ({ files: [] }))
+    const offlineBasemap = await this.mapService
+      .getOfflineBasemapDiagnostic(regionFiles.files.length > 0)
+      .catch(() => ({
+        status: 'service_unavailable' as const,
+        regionalMapsPresent: regionFiles.files.length > 0,
+      }))
     return inertia.render('maps', {
       maps: {
         baseAssetsExist: baseAssetsCheck,
+        offlineBasemap,
         regionFiles: regionFiles.files,
       },
     })
@@ -33,6 +40,17 @@ export default class MapsController {
     if (payload.url) assertNotPrivateUrl(payload.url)
     await this.mapService.downloadBaseAssets(payload.url)
     return { success: true }
+  }
+
+  async setupWorldBasemap({ response }: HttpContext) {
+    try {
+      if (await this.mapService.provisionWorldBasemap()) return { success: true }
+    } catch {
+      // The response intentionally omits internal paths and command errors.
+    }
+    return response.status(503).send({
+      message: 'The offline basemap could not be prepared. Check storage health and connectivity.',
+    })
   }
 
   async downloadRemote({ request }: HttpContext) {
@@ -121,11 +139,13 @@ export default class MapsController {
       })
     }
 
-    const forwardedProto = request.headers()['x-forwarded-proto'];
+    const forwardedProto = request.headers()['x-forwarded-proto']
 
     const protocol: string = forwardedProto
-      ? (typeof forwardedProto === 'string' ? forwardedProto : request.protocol())
-      : request.protocol();
+      ? typeof forwardedProto === 'string'
+        ? forwardedProto
+        : request.protocol()
+      : request.protocol()
 
     const styles = await this.mapService.generateStylesJSON(request.host(), protocol)
     return response.json(styles)
