@@ -12,7 +12,7 @@ export type DiagnosticSnapshot = {
   runtime: string
   wslDistribution?: string | null
   docker: { status: DiagnosticStatus; version?: string | null }
-  compose: { status: DiagnosticStatus }
+  compose: { status: DiagnosticStatus; version?: string | null }
   storage: { status: DiagnosticStatus; freeBytes?: number | null }
   kiwix: { status: DiagnosticStatus; bookCount?: number | null }
   qdrant: { status: DiagnosticStatus }
@@ -113,7 +113,13 @@ export function buildWatchmanDiagnosticReport(snapshot: DiagnosticSnapshot): str
       snapshot.docker.version ? safeToken(snapshot.docker.version) : null
     )
   )
-  lines.push(statusLine('Docker Compose', snapshot.compose.status))
+  lines.push(
+    statusLine(
+      'Docker Compose',
+      snapshot.compose.status,
+      snapshot.compose.version ? safeToken(snapshot.compose.version) : null
+    )
+  )
   lines.push(
     statusLine('Storage', snapshot.storage.status, formatCapacity(snapshot.storage.freeBytes))
   )

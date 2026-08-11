@@ -769,6 +769,7 @@ export class SystemService {
         status: DiagnosticStatus
         version: string | null
         composeDetected: boolean
+        composeVersion: string | null
         watchmanContainerCount: number | null
       }>(
         async () => {
@@ -787,6 +788,10 @@ export class SystemService {
             composeDetected: watchmanContainers.some(
               (container) => container.Labels?.['com.docker.compose.project'] === 'watchman-command'
             ),
+            composeVersion:
+              watchmanContainers.find(
+                (container) => container.Labels?.['com.docker.compose.version']
+              )?.Labels?.['com.docker.compose.version'] ?? null,
             watchmanContainerCount: watchmanContainers.length,
           }
         },
@@ -794,6 +799,7 @@ export class SystemService {
           status: 'UNAVAILABLE' as DiagnosticStatus,
           version: null,
           composeDetected: false,
+          composeVersion: null,
           watchmanContainerCount: null,
         }
       ),
@@ -851,7 +857,10 @@ export class SystemService {
       runtime: existsSync('/.dockerenv') ? 'Watchman Docker container' : 'Watchman host process',
       wslDistribution: process.env.WSL_DISTRO_NAME || null,
       docker: { status: dockerRuntime.status, version: dockerRuntime.version },
-      compose: { status: dockerRuntime.composeDetected ? 'AVAILABLE' : 'UNKNOWN' },
+      compose: {
+        status: dockerRuntime.composeDetected ? 'AVAILABLE' : 'UNKNOWN',
+        version: dockerRuntime.composeVersion,
+      },
       storage,
       kiwix: {
         status: kiwixBookCount === null && kiwixStatus === 'AVAILABLE' ? 'DEGRADED' : kiwixStatus,
