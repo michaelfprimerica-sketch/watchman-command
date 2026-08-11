@@ -11,7 +11,8 @@ const marker = { name: 'Aid station', longitude: -77.04, latitude: 38.9 }
 
 test('accepts old marker requests and optional null notes', async () => {
   assert.deepEqual(await createMapMarkerValidator.validate(marker), marker)
-  assert.equal((await createMapMarkerValidator.validate({ ...marker, notes: null })).notes, null)
+  const withNullNotes = await createMapMarkerValidator.validate({ ...marker, notes: null })
+  assert.equal(withNullNotes.notes, null)
 })
 
 test('preserves multiline, Unicode, and HTML-like marker notes as plain strings', async () => {
@@ -22,10 +23,8 @@ test('preserves multiline, Unicode, and HTML-like marker notes as plain strings'
 
 test('accepts notes at the maximum length and rejects oversized notes', async () => {
   const maximum = 'x'.repeat(MAP_MARKER_NOTES_MAX_LENGTH)
-  assert.equal(
-    (await createMapMarkerValidator.validate({ ...marker, notes: maximum })).notes,
-    maximum
-  )
+  const atMaximum = await createMapMarkerValidator.validate({ ...marker, notes: maximum })
+  assert.equal(atMaximum.notes, maximum)
   await assert.rejects(
     createMapMarkerValidator.validate({
       ...marker,
@@ -35,7 +34,9 @@ test('accepts notes at the maximum length and rejects oversized notes', async ()
 })
 
 test('supports editing and clearing notes while rejecting malformed note values', async () => {
-  assert.equal((await updateMapMarkerValidator.validate({ notes: 'updated' })).notes, 'updated')
-  assert.equal((await updateMapMarkerValidator.validate({ notes: null })).notes, null)
+  const updated = await updateMapMarkerValidator.validate({ notes: 'updated' })
+  const cleared = await updateMapMarkerValidator.validate({ notes: null })
+  assert.equal(updated.notes, 'updated')
+  assert.equal(cleared.notes, null)
   await assert.rejects(updateMapMarkerValidator.validate({ notes: { nested: true } }))
 })
