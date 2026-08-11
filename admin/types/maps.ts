@@ -55,3 +55,6 @@ export type MapExtractPreflight = {
     key: string
   }
 }
+
+/** Maximum persisted length for user-authored saved-location notes. */
+export const MAP_MARKER_NOTES_MAX_LENGTH = 4_000

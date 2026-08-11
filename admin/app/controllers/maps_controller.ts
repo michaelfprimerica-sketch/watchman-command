@@ -11,7 +11,7 @@ import {
 } from '#validators/common'
 import { inject } from '@adonisjs/core'
 import type { HttpContext } from '@adonisjs/core/http'
-import vine from '@vinejs/vine'
+import { createMapMarkerValidator, updateMapMarkerValidator } from '#validators/map_markers'
 
 @inject()
 export default class MapsController {
@@ -157,18 +157,7 @@ export default class MapsController {
   }
 
   async createMarker({ request }: HttpContext) {
-    const payload = await request.validateUsing(
-      vine.compile(
-        vine.object({
-          name: vine.string().trim().minLength(1).maxLength(255),
-          longitude: vine.number().min(-180).max(180),
-          latitude: vine.number().min(-90).max(90),
-          color: vine.string().trim().maxLength(20).optional(),
-          notes: vine.string().trim().nullable().optional(),
-          marker_type: vine.string().trim().maxLength(20).optional(),
-        })
-      )
-    )
+    const payload = await request.validateUsing(createMapMarkerValidator)
     const marker = await MapMarker.create({
       name: payload.name,
       longitude: payload.longitude,
@@ -186,18 +175,7 @@ export default class MapsController {
     if (!marker) {
       return response.status(404).send({ message: 'Marker not found' })
     }
-    const payload = await request.validateUsing(
-      vine.compile(
-        vine.object({
-          name: vine.string().trim().minLength(1).maxLength(255).optional(),
-          color: vine.string().trim().maxLength(20).optional(),
-          longitude: vine.number().min(-180).max(180).optional(),
-          latitude: vine.number().min(-90).max(90).optional(),
-          notes: vine.string().trim().nullable().optional(),
-          marker_type: vine.string().trim().maxLength(20).optional(),
-        })
-      )
-    )
+    const payload = await request.validateUsing(updateMapMarkerValidator)
     if (payload.name !== undefined) marker.name = payload.name
     if (payload.color !== undefined) marker.color = payload.color
     if (payload.longitude !== undefined) marker.longitude = payload.longitude

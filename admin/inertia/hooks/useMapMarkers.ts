@@ -47,8 +47,14 @@ export function useMapMarkers() {
   }, [])
 
   const addMarker = useCallback(
-    async (name: string, longitude: number, latitude: number, color: PinColorId = 'orange') => {
-      const result = await api.createMapMarker({ name, longitude, latitude, color })
+    async (
+      name: string,
+      longitude: number,
+      latitude: number,
+      color: PinColorId = 'orange',
+      notes: string | null = null
+    ) => {
+      const result = await api.createMapMarker({ name, longitude, latitude, color, notes })
       if (result) {
         const marker: MapMarker = {
           id: result.id,
@@ -68,15 +74,24 @@ export function useMapMarkers() {
   )
 
   const updateMarker = useCallback(
-    async (id: number, updates: { name?: string; color?: string }) => {
+    async (id: number, updates: { name?: string; color?: string; notes?: string | null }) => {
       const result = await api.updateMapMarker(id, updates)
       if (result) {
         setMarkers((prev) =>
           prev.map((m) =>
-            m.id === id ? { ...m, name: result.name, color: result.color as PinColorId } : m
+            m.id === id
+              ? {
+                  ...m,
+                  name: result.name,
+                  color: result.color as PinColorId,
+                  notes: result.notes ?? null,
+                }
+              : m
           )
         )
+        return true
       }
+      return false
     },
     []
   )
