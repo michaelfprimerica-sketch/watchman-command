@@ -10,6 +10,10 @@ import {
   Ed25519KnowledgePackVerificationProvider,
   KnowledgePackSigningService,
 } from '../../app/services/knowledge_pack_signature_service.js'
+import {
+  assertKnowledgePackManifestMatchesCatalog,
+  normalizeKnowledgePackManifestSnapshot,
+} from '../../app/services/knowledge_pack_signed_manifest_service.js'
 
 function manifest(): KnowledgePackManifestV1 {
   return {
@@ -202,5 +206,30 @@ test('enforces Ed25519 key purpose and keeps private keys out of the client trus
         { keyId: 'watchman-test-key', publicKey: ed25519.privateKey },
       ]),
     /must be an Ed25519 public key/
+  )
+})
+
+test('binds persisted signed manifests to the exact immutable catalog snapshot', () => {
+  const value = manifest()
+  const catalog = normalizeKnowledgePackManifestSnapshot(value)
+  assert.doesNotThrow(() => assertKnowledgePackManifestMatchesCatalog(value, catalog))
+  assert.throws(
+    () =>
+      assertKnowledgePackManifestMatchesCatalog(
+        { ...value, title: 'A different signed title' },
+        catalog
+      ),
+    /does not match/
+  )
+  assert.throws(
+    () =>
+      assertKnowledgePackManifestMatchesCatalog(
+        {
+          ...value,
+          artifacts: [{ ...value.artifacts[0], sha256: 'b'.repeat(64) }],
+        },
+        catalog
+      ),
+    /does not match/
   )
 })

@@ -19,6 +19,7 @@ export default class KnowledgePackSignedManifest extends BaseModel {
   @column() declare signature_algorithm: 'Ed25519'
   @column() declare canonicalization: 'RFC8785'
   @column() declare signature_encoding: 'base64url'
+  @column.dateTime() declare manifest_published_at: DateTime
   @column() declare canonical_envelope: string
   @column.dateTime({ autoCreate: true }) declare created_at: DateTime
 

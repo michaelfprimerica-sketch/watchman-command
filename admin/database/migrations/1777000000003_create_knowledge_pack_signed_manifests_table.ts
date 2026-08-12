@@ -13,6 +13,7 @@ export default class extends BaseSchema {
       table.string('signature_algorithm', 16).notNullable()
       table.string('canonicalization', 16).notNullable()
       table.string('signature_encoding', 16).notNullable()
+      table.timestamp('manifest_published_at').notNullable()
       table.text('canonical_envelope', 'longtext').notNullable()
       table.timestamp('created_at').notNullable()
       table.foreign('pack_version_id').references('knowledge_pack_versions.id').onDelete('RESTRICT')
