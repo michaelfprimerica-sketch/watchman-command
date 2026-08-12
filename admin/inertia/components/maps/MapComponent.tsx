@@ -15,6 +15,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 
 import { useMapMarkers, PIN_COLORS } from '~/hooks/useMapMarkers'
 import type { PinColorId } from '~/hooks/useMapMarkers'
+import { MAP_MARKER_NOTES_MAX_LENGTH } from '../../../types/maps'
 
 import MarkerPin from './MarkerPin'
 import MarkerPanel from './MarkerPanel'
@@ -64,13 +65,16 @@ export default function MapComponent({ isHoveringUI, showCoordinatesEnabled }: M
   const mapRef = useRef<MapRef>(null)
   const animationFrameRef = useRef<number | null>(null)
 
-  const { markers, addMarker, deleteMarker } = useMapMarkers()
+  const { markers, addMarker, updateMarker, deleteMarker } = useMapMarkers()
 
   const [isDraggingMap, setIsDraggingMap] = useState(false)
   const [placingMarker, setPlacingMarker] = useState<{ lng: number; lat: number } | null>(null)
   const [markerName, setMarkerName] = useState('')
+  const [markerNotes, setMarkerNotes] = useState('')
   const [markerColor, setMarkerColor] = useState<PinColorId>('orange')
   const [selectedMarkerId, setSelectedMarkerId] = useState<number | null>(null)
+  const [editingMarkerId, setEditingMarkerId] = useState<number | null>(null)
+  const [editedMarkerNotes, setEditedMarkerNotes] = useState('')
 
   const [scaleUnit, setScaleUnit] = useState<ScaleUnit>(
     () => (localStorage.getItem('nomad:map-scale-unit') as ScaleUnit) || 'metric'
@@ -150,18 +154,36 @@ export default function MapComponent({ isHoveringUI, showCoordinatesEnabled }: M
   const handleMapClick = useCallback((e: MapLayerMouseEvent) => {
     setPlacingMarker({ lng: e.lngLat.lng, lat: e.lngLat.lat })
     setMarkerName('')
+    setMarkerNotes('')
     setMarkerColor('orange')
     setSelectedMarkerId(null)
+    setEditingMarkerId(null)
   }, [])
 
-  const handleSaveMarker = useCallback(() => {
+  const handleSaveMarker = useCallback(async () => {
     if (placingMarker && markerName.trim()) {
-      addMarker(markerName.trim(), placingMarker.lng, placingMarker.lat, markerColor)
-      setPlacingMarker(null)
-      setMarkerName('')
-      setMarkerColor('orange')
+      const notes = markerNotes.trim() || null
+      const marker = await addMarker(
+        markerName.trim(),
+        placingMarker.lng,
+        placingMarker.lat,
+        markerColor,
+        notes
+      )
+      if (marker) {
+        setPlacingMarker(null)
+        setMarkerName('')
+        setMarkerNotes('')
+        setMarkerColor('orange')
+      }
     }
-  }, [placingMarker, markerName, markerColor, addMarker])
+  }, [placingMarker, markerName, markerNotes, markerColor, addMarker])
+
+  const handleEditMarkerNotes = useCallback(async () => {
+    if (editingMarkerId === null) return
+    const saved = await updateMarker(editingMarkerId, { notes: editedMarkerNotes.trim() || null })
+    if (saved) setEditingMarkerId(null)
+  }, [editedMarkerNotes, editingMarkerId, updateMarker])
 
   const handleFlyTo = useCallback((longitude: number, latitude: number) => {
     mapRef.current?.flyTo({ center: [longitude, latitude], zoom: 12, duration: 1500 })
@@ -265,6 +287,7 @@ export default function MapComponent({ isHoveringUI, showCoordinatesEnabled }: M
                 e.originalEvent.stopPropagation()
                 setSelectedMarkerId(marker.id === selectedMarkerId ? null : marker.id)
                 setPlacingMarker(null)
+                setEditingMarkerId(null)
               }}
             >
               <MarkerPin
@@ -284,10 +307,64 @@ export default function MapComponent({ isHoveringUI, showCoordinatesEnabled }: M
               closeOnClick={false}
             >
               <div className="text-sm font-medium">{selectedMarker.name}</div>
-              {selectedMarker.notes && selectedMarker.notes.trim() && (
+              {editingMarkerId === selectedMarker.id ? (
+                <div className="mt-1.5 max-w-[260px]">
+                  <textarea
+                    autoFocus
+                    aria-label="Saved location notes"
+                    value={editedMarkerNotes}
+                    maxLength={MAP_MARKER_NOTES_MAX_LENGTH}
+                    rows={4}
+                    onChange={(event) => setEditedMarkerNotes(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Escape') setEditingMarkerId(null)
+                      if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+                        event.preventDefault()
+                        void handleEditMarkerNotes()
+                      }
+                    }}
+                    className="block w-full resize-y rounded border border-border-subtle bg-surface-primary px-2 py-1 text-xs text-text-primary placeholder:text-text-muted focus:border-desert-green focus:outline-none"
+                  />
+                  <div className="mt-1 flex items-center justify-between gap-2">
+                    <span className="text-[10px] text-text-muted">
+                      {editedMarkerNotes.length}/{MAP_MARKER_NOTES_MAX_LENGTH}
+                    </span>
+                    <div className="flex gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setEditingMarkerId(null)}
+                        className="rounded px-2 py-1 text-xs text-text-muted hover:bg-surface-secondary hover:text-text-primary"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleEditMarkerNotes()}
+                        className="rounded bg-desert-green px-2 py-1 text-xs text-white hover:bg-desert-green-dark"
+                      >
+                        Save note
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : selectedMarker.notes && selectedMarker.notes.trim() ? (
                 <div className="mt-1 text-xs text-desert-stone-dark whitespace-pre-wrap break-words max-w-[240px]">
                   {selectedMarker.notes}
                 </div>
+              ) : (
+                <div className="mt-1 text-xs italic text-text-muted">No note</div>
+              )}
+              {editingMarkerId !== selectedMarker.id && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditedMarkerNotes(selectedMarker.notes ?? '')
+                    setEditingMarkerId(selectedMarker.id)
+                  }}
+                  className="mt-1.5 rounded px-2 py-1 text-xs text-desert-green hover:bg-surface-secondary"
+                >
+                  {selectedMarker.notes ? 'Edit note' : 'Add note'}
+                </button>
               )}
             </Popup>
           )}
@@ -313,6 +390,26 @@ export default function MapComponent({ isHoveringUI, showCoordinatesEnabled }: M
                   }}
                   className="block w-full rounded border border-gray-300 px-2 py-1 text-sm placeholder:text-gray-400 focus:outline-none focus:border-gray-500"
                 />
+
+                <textarea
+                  aria-label="Location notes"
+                  placeholder="Notes (optional)"
+                  value={markerNotes}
+                  maxLength={MAP_MARKER_NOTES_MAX_LENGTH}
+                  onChange={(event) => setMarkerNotes(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape') setPlacingMarker(null)
+                    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+                      event.preventDefault()
+                      void handleSaveMarker()
+                    }
+                  }}
+                  rows={3}
+                  className="mt-1.5 block w-full resize-y rounded border border-border-subtle bg-surface-primary px-2 py-1 text-sm text-text-primary placeholder:text-text-muted focus:border-desert-green focus:outline-none"
+                />
+                <div className="mt-0.5 text-right text-[10px] text-text-muted">
+                  {markerNotes.length}/{MAP_MARKER_NOTES_MAX_LENGTH}
+                </div>
 
                 <div className="mt-1.5 flex gap-1 items-center">
                   {PIN_COLORS.map((c) => (
@@ -344,7 +441,7 @@ export default function MapComponent({ isHoveringUI, showCoordinatesEnabled }: M
 
                   <button
                     type="button"
-                    onClick={handleSaveMarker}
+                    onClick={() => void handleSaveMarker()}
                     disabled={!markerName.trim()}
                     className="text-xs bg-desert-green text-white rounded px-2.5 py-1 hover:bg-desert-green-dark disabled:opacity-40 transition-colors"
                   >

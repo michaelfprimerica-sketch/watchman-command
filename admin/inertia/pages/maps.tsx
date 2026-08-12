@@ -8,18 +8,32 @@ import StyledButton from '~/components/StyledButton'
 import Alert from '~/components/Alert'
 
 import { FileEntry } from '../../types/files'
+import type { OfflineBasemapDiagnostic } from '../../types/maps'
+import { getOfflineBasemapNotice } from '~/lib/offline_basemap'
 
 export default function Maps(props: {
-  maps: { baseAssetsExist: boolean; regionFiles: FileEntry[] }
+  maps: {
+    baseAssetsExist: boolean
+    offlineBasemap: OfflineBasemapDiagnostic
+    regionFiles: FileEntry[]
+  }
 }) {
   const [isHoveringUI, setIsHoveringUI] = useState(false)
   const [showMapCoordinates, setShowMapCoordinates] = useState(true)
 
-  const alertMessage = !props.maps.baseAssetsExist
-    ? 'The base map assets have not been installed. Please download them first to enable map functionality.'
-    : props.maps.regionFiles.length === 0
-    ? 'No map regions have been downloaded yet. Please download some regions to enable map functionality.'
-    : null
+  const basemapNotice = getOfflineBasemapNotice(props.maps.offlineBasemap)
+  const activeBasemapNotice =
+    basemapNotice && (props.maps.baseAssetsExist || basemapNotice.takesPriority)
+      ? basemapNotice
+      : null
+  const alertMessage = activeBasemapNotice
+    ? activeBasemapNotice.message
+    : !props.maps.baseAssetsExist
+      ? 'The base map assets have not been installed. Please download them first to enable map functionality.'
+      : props.maps.regionFiles.length === 0
+        ? 'No map regions have been downloaded yet. Please download some regions to enable map functionality.'
+        : null
+  const alertTitle = activeBasemapNotice?.title ?? alertMessage
 
   return (
     <MapsLayout>
@@ -62,7 +76,8 @@ export default function Maps(props: {
             onMouseLeave={() => setIsHoveringUI(false)}
           >
             <Alert
-              title={alertMessage}
+              title={alertTitle ?? undefined}
+              message={activeBasemapNotice ? alertMessage : undefined}
               type="warning"
               variant="solid"
               className="w-full"
@@ -78,10 +93,7 @@ export default function Maps(props: {
 
         {/* Map */}
         <div className="absolute inset-0">
-          <MapComponent
-            isHoveringUI={isHoveringUI}
-            showCoordinatesEnabled={showMapCoordinates}
-          />
+          <MapComponent isHoveringUI={isHoveringUI} showCoordinatesEnabled={showMapCoordinates} />
         </div>
       </div>
     </MapsLayout>

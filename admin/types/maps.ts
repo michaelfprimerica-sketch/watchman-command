@@ -55,3 +55,19 @@ export type MapExtractPreflight = {
     key: string
   }
 }
+
+/** Maximum persisted length for user-authored saved-location notes. */
+export const MAP_MARKER_NOTES_MAX_LENGTH = 4_000
+
+export type OfflineBasemapStatus =
+  | 'available'
+  | 'missing'
+  | 'corrupt'
+  | 'unreadable'
+  | 'storage_unavailable'
+  | 'service_unavailable'
+
+export type OfflineBasemapDiagnostic = {
+  status: OfflineBasemapStatus
+  regionalMapsPresent: boolean
+}

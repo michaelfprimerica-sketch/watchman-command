@@ -827,6 +827,7 @@ class API {
     longitude: number
     latitude: number
     color?: string
+    notes?: string | null
   }) {
     return catchInternal(async () => {
       const response = await this.client.post<{
@@ -842,7 +843,10 @@ class API {
     })()
   }
 
-  async updateMapMarker(id: number, data: { name?: string; color?: string }) {
+  async updateMapMarker(
+    id: number,
+    data: { name?: string; color?: string; notes?: string | null }
+  ) {
     return catchInternal(async () => {
       const response = await this.client.patch<{
         id: number
@@ -850,6 +854,8 @@ class API {
         longitude: number
         latitude: number
         color: string
+        notes: string | null
+        created_at: string
       }>(`/maps/markers/${id}`, data)
       return response.data
     })()

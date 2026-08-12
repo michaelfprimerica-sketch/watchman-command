@@ -11,27 +11,50 @@ import {
 } from '#validators/common'
 import { inject } from '@adonisjs/core'
 import type { HttpContext } from '@adonisjs/core/http'
-import vine from '@vinejs/vine'
+import { createMapMarkerValidator, updateMapMarkerValidator } from '#validators/map_markers'
 
 @inject()
 export default class MapsController {
   constructor(private mapService: MapService) {}
 
   async index({ inertia }: HttpContext) {
-    const baseAssetsCheck = await this.mapService.ensureBaseAssets()
-    const regionFiles = await this.mapService.listRegions()
+    const baseAssetsCheck = await this.mapService.ensureBaseAssets().catch(() => false)
+    const regionFiles = await this.mapService.listRegions().catch(() => ({ files: [] }))
+    const offlineBasemap = await this.mapService
+      .getOfflineBasemapDiagnostic(regionFiles.files.length > 0)
+      .catch(() => ({
+        status: 'service_unavailable' as const,
+        regionalMapsPresent: regionFiles.files.length > 0,
+      }))
     return inertia.render('maps', {
       maps: {
         baseAssetsExist: baseAssetsCheck,
+        offlineBasemap,
         regionFiles: regionFiles.files,
       },
     })
   }
 
-  async downloadBaseAssets({ request }: HttpContext) {
+  async downloadBaseAssets({ request, response }: HttpContext) {
     const payload = await request.validateUsing(remoteDownloadValidatorOptional)
     if (payload.url) assertNotPrivateUrl(payload.url)
-    await this.mapService.downloadBaseAssets(payload.url)
+    let ready = false
+    try {
+      if (payload.url) {
+        ready = await this.mapService.downloadBaseAssets(payload.url)
+      } else {
+        const baseAssetsReady = await this.mapService.ensureBaseAssets()
+        const basemap = await this.mapService.getOfflineBasemapDiagnostic(false)
+        ready = baseAssetsReady && basemap.status === 'available'
+      }
+    } catch {
+      // Return only a stable, path-free error below.
+    }
+    if (!ready) {
+      return response.status(503).send({
+        message: 'The offline map assets could not be prepared. Check storage and connectivity.',
+      })
+    }
     return { success: true }
   }
 
@@ -121,11 +144,13 @@ export default class MapsController {
       })
     }
 
-    const forwardedProto = request.headers()['x-forwarded-proto'];
+    const forwardedProto = request.headers()['x-forwarded-proto']
 
     const protocol: string = forwardedProto
-      ? (typeof forwardedProto === 'string' ? forwardedProto : request.protocol())
-      : request.protocol();
+      ? typeof forwardedProto === 'string'
+        ? forwardedProto
+        : request.protocol()
+      : request.protocol()
 
     const styles = await this.mapService.generateStylesJSON(request.host(), protocol)
     return response.json(styles)
@@ -157,18 +182,7 @@ export default class MapsController {
   }
 
   async createMarker({ request }: HttpContext) {
-    const payload = await request.validateUsing(
-      vine.compile(
-        vine.object({
-          name: vine.string().trim().minLength(1).maxLength(255),
-          longitude: vine.number().min(-180).max(180),
-          latitude: vine.number().min(-90).max(90),
-          color: vine.string().trim().maxLength(20).optional(),
-          notes: vine.string().trim().nullable().optional(),
-          marker_type: vine.string().trim().maxLength(20).optional(),
-        })
-      )
-    )
+    const payload = await request.validateUsing(createMapMarkerValidator)
     const marker = await MapMarker.create({
       name: payload.name,
       longitude: payload.longitude,
@@ -186,18 +200,7 @@ export default class MapsController {
     if (!marker) {
       return response.status(404).send({ message: 'Marker not found' })
     }
-    const payload = await request.validateUsing(
-      vine.compile(
-        vine.object({
-          name: vine.string().trim().minLength(1).maxLength(255).optional(),
-          color: vine.string().trim().maxLength(20).optional(),
-          longitude: vine.number().min(-180).max(180).optional(),
-          latitude: vine.number().min(-90).max(90).optional(),
-          notes: vine.string().trim().nullable().optional(),
-          marker_type: vine.string().trim().maxLength(20).optional(),
-        })
-      )
-    )
+    const payload = await request.validateUsing(updateMapMarkerValidator)
     if (payload.name !== undefined) marker.name = payload.name
     if (payload.color !== undefined) marker.color = payload.color
     if (payload.longitude !== undefined) marker.longitude = payload.longitude

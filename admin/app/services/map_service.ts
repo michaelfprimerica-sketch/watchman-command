@@ -1,8 +1,5 @@
-import { BaseStylesFile, MapLayer } from '../../types/maps.js'
-import {
-  DownloadRemoteSuccessCallback,
-  FileEntry,
-} from '../../types/files.js'
+import { BaseStylesFile, MapLayer, OfflineBasemapDiagnostic } from '../../types/maps.js'
+import { DownloadRemoteSuccessCallback, FileEntry } from '../../types/files.js'
 import { doResumableDownloadWithRetry } from '../utils/downloads.js'
 import { extract } from 'tar'
 import env from '#start/env'
@@ -39,6 +36,7 @@ import { execFile } from 'child_process'
 import { createHash, randomBytes } from 'crypto'
 import { tmpdir } from 'os'
 import { promisify } from 'util'
+import { inspectOfflineBasemap } from '../utils/offline_basemap.js'
 
 const execFileAsync = promisify(execFile)
 const DRY_RUN_TIMEOUT_MS = 60_000
@@ -273,7 +271,6 @@ export class MapService implements IMapService {
 
     const filepath = join(process.cwd(), this.mapStoragePath, 'pmtiles', filename)
 
-
     // First, ensure base assets are present - regions depend on them
     const baseAssetsExist = await this.ensureBaseAssets()
     if (!baseAssetsExist) {
@@ -285,7 +282,11 @@ export class MapService implements IMapService {
     // Parse resource metadata
     const parsedFilename = CollectionManifestService.parseMapFilename(filename)
     const resourceMetadata = parsedFilename
-      ? { resource_id: parsedFilename.resource_id, version: parsedFilename.version, collection_ref: null }
+      ? {
+          resource_id: parsedFilename.resource_id,
+          version: parsedFilename.version,
+          collection_ref: null,
+        }
       : undefined
 
     // Dispatch background job
@@ -344,7 +345,10 @@ export class MapService implements IMapService {
     }
   }
 
-  async generateStylesJSON(host: string | null = null, protocol: string = 'http'): Promise<BaseStylesFile> {
+  async generateStylesJSON(
+    host: string | null = null,
+    protocol: string = 'http'
+  ): Promise<BaseStylesFile> {
     if (!(await this.checkBaseAssetsExist())) {
       throw new Error('Base map assets are missing from storage/maps')
     }
@@ -360,11 +364,11 @@ export class MapService implements IMapService {
     const regions = (await this.listRegions()).files
 
     /** If we have the host, use it to build public URLs, otherwise we'll fallback to defaults
-    * This is mainly useful because we need to know what host the user is accessing from in order to
-    * properly generate URLs in the styles file
-    * e.g. user is accessing from "example.com", but we would by default generate "localhost:8080/..." so maps would
-    * fail to load.
-    */
+     * This is mainly useful because we need to know what host the user is accessing from in order to
+     * properly generate URLs in the styles file
+     * e.g. user is accessing from "example.com", but we would by default generate "localhost:8080/..." so maps would
+     * fail to load.
+     */
     const sources = this.generateSourcesArray(host, regions, protocol)
     const baseUrl = this.getPublicFileBaseUrl(host, this.basemapsAssetsDir, protocol)
 
@@ -404,6 +408,21 @@ export class MapService implements IMapService {
     return true
   }
 
+  /** Best-effort, read-only health check for the low-zoom offline world map. */
+  async getOfflineBasemapDiagnostic(
+    regionalMapsPresent: boolean
+  ): Promise<OfflineBasemapDiagnostic> {
+    const basePath = resolve(join(this.baseDirPath, 'pmtiles'))
+    const filepath = resolve(join(basePath, WORLD_BASEMAP_FILENAME))
+    if (!filepath.startsWith(basePath + sep)) {
+      return { status: 'service_unavailable', regionalMapsPresent }
+    }
+
+    const status = await inspectOfflineBasemap(this.baseDirPath, filepath)
+    this.worldBasemapReady = status === 'available'
+    return { status, regionalMapsPresent }
+  }
+
   /**
    * Extract a low-zoom global basemap once so the map isn't grey outside a
    * regional extract's polygon. Cheap (~15 MB, a handful of HTTP range
@@ -431,10 +450,13 @@ export class MapService implements IMapService {
 
     await ensureDirectoryExists(basePath)
 
-    const existing = await getFileStatsIfExists(filepath)
-    if (existing && Number(existing.size) > 0) {
+    const existingStatus = await inspectOfflineBasemap(this.baseDirPath, filepath)
+    if (existingStatus === 'available') {
       this.worldBasemapReady = true
       return
+    }
+    if (existingStatus !== 'missing') {
+      throw new Error(`World basemap is ${existingStatus.replace('_', ' ')}`)
     }
 
     const info = await this.getGlobalMapInfo()
@@ -503,7 +525,11 @@ export class MapService implements IMapService {
     return a < b ? -1 : 1
   }
 
-  private generateSourcesArray(host: string | null, regions: FileEntry[], protocol: string = 'http'): BaseStylesFile['sources'][] {
+  private generateSourcesArray(
+    host: string | null,
+    regions: FileEntry[],
+    protocol: string = 'http'
+  ): BaseStylesFile['sources'][] {
     const sources: BaseStylesFile['sources'][] = []
     const baseUrl = this.getPublicFileBaseUrl(host, 'pmtiles', protocol)
 
@@ -763,7 +789,9 @@ export class MapService implements IMapService {
         const preflight = await this.runDryRun(info, regionFilepath, maxzoom)
         estimatedBytes = preflight.bytes
       } catch (err) {
-        logger.warn(`[MapService] extractRegion preflight failed, proceeding without estimate: ${err}`)
+        logger.warn(
+          `[MapService] extractRegion preflight failed, proceeding without estimate: ${err}`
+        )
       }
     }
 
@@ -815,14 +843,8 @@ export class MapService implements IMapService {
 
   private validateMaxzoom(maxzoom: number | undefined): void {
     if (typeof maxzoom !== 'number') return
-    if (
-      !Number.isInteger(maxzoom) ||
-      maxzoom < EXTRACT_MIN_ZOOM ||
-      maxzoom > EXTRACT_MAX_ZOOM
-    ) {
-      throw new Error(
-        `maxzoom must be an integer in [${EXTRACT_MIN_ZOOM}, ${EXTRACT_MAX_ZOOM}]`
-      )
+    if (!Number.isInteger(maxzoom) || maxzoom < EXTRACT_MIN_ZOOM || maxzoom > EXTRACT_MAX_ZOOM) {
+      throw new Error(`maxzoom must be an integer in [${EXTRACT_MIN_ZOOM}, ${EXTRACT_MAX_ZOOM}]`)
     }
   }
 
@@ -905,7 +927,11 @@ export class MapService implements IMapService {
    * @param protocol - the protocol to use in the generated URL (e.g. "http", "https"), defaults to "http"
    * @returns the public URL for the map asset
    */
-  private getPublicFileBaseUrl(specifiedHost: string | null, childPath: string, protocol: string = 'http'): string {
+  private getPublicFileBaseUrl(
+    specifiedHost: string | null,
+    childPath: string,
+    protocol: string = 'http'
+  ): string {
     function getHost() {
       try {
         const localUrlRaw = env.get('URL')
@@ -935,7 +961,7 @@ export class MapService implements IMapService {
       return getHost()
     }
 
-    const host = specifiedHostOrDefault();
+    const host = specifiedHostOrDefault()
     const withProtocol = `${protocol}://${host}`
     const baseUrlPath =
       process.env.NODE_ENV === 'production' ? childPath : urlJoin(this.mapStoragePath, childPath)
@@ -952,8 +978,7 @@ function findExactGroupMatch(
   return (
     groups.find(
       (g) =>
-        g.countries.length === countries.length &&
-        g.countries.every((c, i) => c === countries[i])
+        g.countries.length === countries.length && g.countries.every((c, i) => c === countries[i])
     ) ?? null
   )
 }
