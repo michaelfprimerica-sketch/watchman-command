@@ -153,6 +153,7 @@ test('publication uses a dedicated evidence gate and preserves historical timest
   assert.match(source, /from\('knowledge_pack_signed_manifests'\)[\s\S]*pack_version_id/)
   assert.match(source, /assertKnowledgePackManifestMatchesCatalog/)
   assert.match(source, /persistedManifestHash !== signedManifest\.manifest_sha256/)
+  assert.match(source, /signedManifest\.manifest_published_at/)
   assert.match(source, /from\('knowledge_pack_financial_terms'\)[\s\S]*pack_version_id/)
   assert.match(source, /where\('effective_from', '<=', nowSql\(\)\)/)
   assert.match(source, /financial terms do not match the version ownership snapshot/i)

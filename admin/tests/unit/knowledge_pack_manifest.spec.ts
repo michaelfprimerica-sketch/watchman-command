@@ -183,6 +183,7 @@ test('commits no private key and the immutable signed-manifest schema resists ro
   assert.match(migration, /pack_version_id.*unique/)
   assert.match(migration, /signature_algorithm = 'Ed25519'/)
   assert.match(migration, /canonicalization = 'RFC8785'/)
+  assert.match(migration, /manifest_published_at/)
   assert.match(migration, /Refusing to roll back immutable signed Knowledge Pack manifests/)
 })
 

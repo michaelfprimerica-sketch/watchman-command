@@ -204,6 +204,9 @@ export class KnowledgePackSignedManifestService {
         .forUpdate()
         .first()
       if (!version) throw new Error('Knowledge Pack version does not exist')
+      if (version.approval_status !== 'APPROVED') {
+        throw new Error('Only an approved Knowledge Pack version may record its release manifest')
+      }
       if (
         version.pack_id !== signedManifest.packId ||
         version.version !== signedManifest.packVersion

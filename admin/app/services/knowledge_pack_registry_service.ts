@@ -448,7 +448,15 @@ export class KnowledgePackRegistryService {
       }
 
       const now = nowSql()
-      const firstVersionPublishedAt = version.published_at ?? now
+      const signedPublishedDate =
+        signedManifest.manifest_published_at instanceof Date
+          ? DateTime.fromJSDate(signedManifest.manifest_published_at, { zone: 'utc' })
+          : DateTime.fromSQL(signedManifest.manifest_published_at, { zone: 'utc' })
+      if (!signedPublishedDate.isValid) {
+        throw new Error('Persisted signed manifest timestamp is invalid')
+      }
+      const signedPublishedAt = signedPublishedDate.toSQL({ includeOffset: false }) as string
+      const firstVersionPublishedAt = version.published_at ?? signedPublishedAt
       await trx.from('knowledge_pack_versions').where('id', input.packVersionId).update({
         approval_status: 'PUBLISHED',
         is_published: true,
