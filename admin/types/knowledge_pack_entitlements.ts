@@ -104,6 +104,7 @@ export type KnowledgePackAccessDecision =
       allowed: false
       reason:
         | 'PACK_MISMATCH'
+        | 'SUBJECT_MISMATCH'
         | 'INSTALL_NOT_READY'
         | 'INSTALL_NOT_VERIFIED'
         | 'VERSION_NOT_GRANTED'

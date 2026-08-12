@@ -22,6 +22,8 @@ const installedPack: InstalledKnowledgePackSnapshot = {
   artifactHashesVerified: true,
 }
 
+const requestingSubject = { customerId: 'customer-1', organizationId: null }
+
 const purchasedEntitlement: KnowledgePackEntitlement = {
   entitlementId: 'entitlement-purchase-1',
   subject: { customerId: 'customer-1' },
@@ -48,6 +50,7 @@ test('keeps a verified purchased version usable after membership expires', () =>
 
   assert.deepEqual(
     evaluateInstalledKnowledgePackUse({
+      requestingSubject,
       installed: installedPack,
       entitlement: purchasedEntitlement,
       membership: expiredMembership,
@@ -72,6 +75,7 @@ test('keeps a verified purchased version usable after membership expires', () =>
   }
   assert.deepEqual(
     evaluateInstalledKnowledgePackUse({
+      requestingSubject,
       installed: installedPack,
       entitlement: acquiredAfterMembershipGrant,
       membership: expiredMembership,
@@ -79,6 +83,29 @@ test('keeps a verified purchased version usable after membership expires', () =>
     }),
     { allowed: true, reason: 'PERPETUAL_VERSION_GRANT' }
   )
+})
+
+test('rejects another customer or organization before evaluating a perpetual grant', () => {
+  const organizationEntitlement: KnowledgePackEntitlement = {
+    ...purchasedEntitlement,
+    subject: { customerId: 'customer-1', organizationId: 'organization-a' },
+  }
+
+  for (const mismatchedSubject of [
+    { customerId: 'customer-2', organizationId: 'organization-a' },
+    { customerId: 'customer-1', organizationId: 'organization-b' },
+  ]) {
+    assert.deepEqual(
+      evaluateInstalledKnowledgePackUse({
+        requestingSubject: mismatchedSubject,
+        installed: installedPack,
+        entitlement: organizationEntitlement,
+        membership: null,
+        evaluatedAt: '2026-08-11T12:00:00.000Z',
+      }),
+      { allowed: false, reason: 'SUBJECT_MISMATCH' }
+    )
+  }
 })
 
 test('uses membership only for the version granted by that active membership', () => {
@@ -107,6 +134,7 @@ test('uses membership only for the version granted by that active membership', (
 
   assert.equal(
     evaluateInstalledKnowledgePackUse({
+      requestingSubject,
       installed: installedPack,
       entitlement: membershipEntitlement,
       membership,
@@ -117,6 +145,7 @@ test('uses membership only for the version granted by that active membership', (
   membership.state = 'EXPIRED'
   assert.deepEqual(
     evaluateInstalledKnowledgePackUse({
+      requestingSubject,
       installed: installedPack,
       entitlement: membershipEntitlement,
       membership,
@@ -141,6 +170,7 @@ test('requires explicit refund, fraud, or security revocation for a purchased ve
 
   assert.deepEqual(
     evaluateInstalledKnowledgePackUse({
+      requestingSubject,
       installed: installedPack,
       entitlement: revoked,
       membership: null,

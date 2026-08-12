@@ -10,6 +10,7 @@ import type {
 import { KNOWLEDGE_PACK_ACQUISITION_GRANT_MAX_TTL_MS } from '../../types/knowledge_pack_entitlements.js'
 
 type InstalledPackUseInput = {
+  requestingSubject: EntitlementSubject
   installed: InstalledKnowledgePackSnapshot
   entitlement: KnowledgePackEntitlement
   membership?: MembershipEntitlement | null
@@ -37,6 +38,13 @@ function assertOpaqueReference(value: string, label: string): void {
   }
 }
 
+function subjectsMatch(left: EntitlementSubject, right: EntitlementSubject): boolean {
+  return (
+    left.customerId === right.customerId &&
+    (left.organizationId ?? null) === (right.organizationId ?? null)
+  )
+}
+
 function membershipIsActive(
   membership: MembershipEntitlement | null | undefined,
   membershipId: string,
@@ -46,12 +54,7 @@ function membershipIsActive(
   if (!membership || membership.membershipId !== membershipId || membership.state !== 'ACTIVE') {
     return false
   }
-  if (
-    membership.subject.customerId !== expectedSubject.customerId ||
-    (membership.subject.organizationId ?? null) !== (expectedSubject.organizationId ?? null)
-  ) {
-    return false
-  }
+  if (!subjectsMatch(membership.subject, expectedSubject)) return false
 
   const validFrom = timestamp(membership.validFrom, 'Membership valid-from date')
   if (evaluatedAt < validFrom) return false
@@ -66,6 +69,9 @@ function membershipIsActive(
 export function evaluateInstalledKnowledgePackUse(
   input: InstalledPackUseInput
 ): KnowledgePackAccessDecision {
+  if (!subjectsMatch(input.requestingSubject, input.entitlement.subject)) {
+    return { allowed: false, reason: 'SUBJECT_MISMATCH' }
+  }
   if (input.installed.packId !== input.entitlement.packId) {
     return { allowed: false, reason: 'PACK_MISMATCH' }
   }
