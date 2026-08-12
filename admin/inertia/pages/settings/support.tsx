@@ -10,17 +10,18 @@ export default function SupportPage() {
         <main className="px-12 py-6 max-w-4xl">
           <h1 className="text-4xl font-semibold mb-4">Support Watchman Command</h1>
           <p className="text-text-muted mb-10 text-lg">
-            Watchman Command is built on the open-source Project N.O.M.A.D. foundation and is 100%
-            free and open source — no subscriptions, no paywalls, no catch. If you'd like to help
-            keep the project going, here are a few ways to show your support.
+            The Watchman Command core is free and open source — no subscription or paywall is needed
+            to run it. Optional proprietary Watchman Knowledge Packs are separately governed content
+            and may have their own acquisition or membership terms. If you'd like to help keep the
+            core project going, here are a few ways to show your support.
           </p>
 
           {/* Ko-fi */}
           <section className="mb-12">
             <h2 className="text-2xl font-semibold mb-3">Buy Us a Coffee</h2>
             <p className="text-text-muted mb-4">
-              Every contribution helps fund development, server costs, and new content packs for
-              Watchman Command. Even a small donation goes a long way.
+              Every contribution helps fund development and server costs for the open-source
+              Watchman Command core. Even a small donation goes a long way.
             </p>
             <a
               href="https://ko-fi.com/crosstalk"
