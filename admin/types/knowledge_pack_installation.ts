@@ -51,3 +51,20 @@ export interface KnowledgePackInstallationRegistry {
 
   listReleaseHistory(packId: string): Promise<InstalledKnowledgePackRelease[]>
 }
+
+/** Opaque, one-use handle for a service-created private acquisition directory. */
+export type KnowledgePackStagingHandle = Readonly<{
+  id: string
+  artifactRoot: string
+}>
+
+export type InstallKnowledgePackInput = {
+  staging: KnowledgePackStagingHandle
+  signedManifest: string | Uint8Array
+  source: KnowledgePackInstallationSource
+}
+
+export type InstallKnowledgePackResult = {
+  release: InstalledKnowledgePackRelease
+  releaseDirectory: string
+}
