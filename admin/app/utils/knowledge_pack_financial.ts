@@ -105,6 +105,24 @@ export function assertFinancialTerms(input: KnowledgePackFinancialTermsInput): v
   } else {
     assertKnowledgePackIdentifier(input.creatorId, 'Creator ID')
   }
+  const currentRate = currentCreatorRoyaltyRateBps(input.ownerType)
+  if (input.termsBasis === 'CURRENT_PROGRAM') {
+    if (input.creatorRoyaltyRateBps !== currentRate) {
+      throw new Error('Current-program terms must use the approved creator royalty rate')
+    }
+    if (input.agreementReference || input.negotiationReason || input.approvedByRef) {
+      throw new Error('Current-program terms cannot contain negotiated-term metadata')
+    }
+  } else {
+    if (input.ownerType !== 'AUTHORIZED_WATCHMAN_CREATOR') {
+      throw new Error('HQ Knowledge Pack economics cannot use negotiated creator terms')
+    }
+    if (!input.agreementReference || !input.negotiationReason?.trim() || !input.approvedByRef) {
+      throw new Error('Negotiated terms require agreement, reason, and approver references')
+    }
+    assertKnowledgePackIdentifier(input.agreementReference, 'Agreement reference')
+    assertKnowledgePackIdentifier(input.approvedByRef, 'Terms approver reference')
+  }
   if (!Number.isFinite(Date.parse(input.effectiveFrom))) {
     throw new Error('Financial terms effective date is invalid')
   }

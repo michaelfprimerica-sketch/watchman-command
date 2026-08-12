@@ -57,6 +57,7 @@ test('financial terms bind creator identity and permit future explicit negotiate
       creatorId: 'creator-ada-01',
       creatorRoyaltyRateBps: 8000,
       effectiveFrom: '2026-08-11T00:00:00Z',
+      termsBasis: 'CURRENT_PROGRAM',
     })
   )
   assert.doesNotThrow(() =>
@@ -68,6 +69,10 @@ test('financial terms bind creator identity and permit future explicit negotiate
       creatorId: 'creator-ada-01',
       creatorRoyaltyRateBps: 7500,
       effectiveFrom: '2027-01-01T00:00:00Z',
+      termsBasis: 'NEGOTIATED',
+      agreementReference: 'agreement-2027-01',
+      negotiationReason: 'Future approved individual creator agreement',
+      approvedByRef: 'watchman-reviewer-01',
     })
   )
   assert.throws(() =>
@@ -79,6 +84,19 @@ test('financial terms bind creator identity and permit future explicit negotiate
       creatorId: 'unrelated-representative',
       creatorRoyaltyRateBps: 8000,
       effectiveFrom: '2026-08-11T00:00:00Z',
+      termsBasis: 'CURRENT_PROGRAM',
+    })
+  )
+  assert.throws(() =>
+    assertFinancialTerms({
+      packId: 'pack-obsolete-split',
+      packVersionId: 'version-obsolete-v1',
+      termsVersion: 1,
+      ownerType: 'AUTHORIZED_WATCHMAN_CREATOR',
+      creatorId: 'creator-ada-01',
+      creatorRoyaltyRateBps: 4000,
+      effectiveFrom: '2026-08-11T00:00:00Z',
+      termsBasis: 'CURRENT_PROGRAM',
     })
   )
 })
@@ -137,11 +155,25 @@ test('financial migration protects immutable terms and ledger history', async ()
   assert.match(source, /creator_royalty_rate_bps >= 0/)
   assert.match(source, /creator_royalty_rate_bps <= 10000/)
   assert.match(source, /knowledge_pack_terms_owner_check/)
+  assert.match(source, /knowledge_pack_terms_basis_check/)
+  assert.match(source, /creator_royalty_rate_bps = 8000/)
   assert.match(source, /amount_minor/)
   assert.match(source, /reverses_entry_id/)
   assert.match(source, /Refusing to roll back populated immutable Knowledge Pack financial history/)
   assert.doesNotMatch(
     source,
-    /payroll|rent|marketing|office|development overhead|corporate overhead/i
+    /\bpayroll\b|\brent\b|\bmarketing\b|\boffice costs?\b|development overhead|corporate overhead/i
   )
+})
+
+test('transaction posting resolves effective terms and derives shares internally', async () => {
+  const source = await readFile(
+    new URL('../../app/services/knowledge_pack_financial_service.ts', import.meta.url),
+    'utf8'
+  )
+  assert.match(source, /async postTransaction/)
+  assert.match(source, /where\('effective_from', '<=', occurredAtSql\)/)
+  assert.match(source, /calculateKnowledgePackRevenueShares/)
+  assert.match(source, /computeNetKnowledgePackRevenue/)
+  assert.doesNotMatch(source, /async appendEntry/)
 })

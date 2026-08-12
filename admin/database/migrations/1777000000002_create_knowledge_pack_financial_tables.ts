@@ -24,6 +24,10 @@ export default class extends BaseSchema {
       table.enum('owner_type_snapshot', OWNER_TYPES).notNullable()
       table.string('creator_id_snapshot', 36).nullable()
       table.integer('creator_royalty_rate_bps').unsigned().notNullable()
+      table.enum('terms_basis', ['CURRENT_PROGRAM', 'NEGOTIATED']).notNullable()
+      table.string('agreement_reference', 128).nullable()
+      table.text('negotiation_reason').nullable()
+      table.string('approved_by_ref', 128).nullable()
       table.timestamp('effective_from').notNullable()
       table.string('created_by_ref', 128).notNullable()
       table.timestamp('created_at').notNullable()
@@ -49,6 +53,20 @@ export default class extends BaseSchema {
           `AND creator_id_snapshot IS NOT NULL)`,
         {},
         'knowledge_pack_terms_owner_check'
+      )
+      table.check(
+        `(terms_basis = 'CURRENT_PROGRAM' AND agreement_reference IS NULL ` +
+          `AND negotiation_reason IS NULL AND approved_by_ref IS NULL ` +
+          `AND ((owner_type_snapshot = 'VIGILANT_WATCHMAN' ` +
+          `AND creator_royalty_rate_bps = 0) OR ` +
+          `(owner_type_snapshot = 'AUTHORIZED_WATCHMAN_CREATOR' ` +
+          `AND creator_royalty_rate_bps = 8000))) OR ` +
+          `(terms_basis = 'NEGOTIATED' ` +
+          `AND owner_type_snapshot = 'AUTHORIZED_WATCHMAN_CREATOR' ` +
+          `AND agreement_reference IS NOT NULL AND negotiation_reason IS NOT NULL ` +
+          `AND approved_by_ref IS NOT NULL)`,
+        {},
+        'knowledge_pack_terms_basis_check'
       )
     })
 

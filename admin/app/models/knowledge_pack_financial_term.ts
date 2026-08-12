@@ -6,7 +6,10 @@ import {
   SnakeCaseNamingStrategy,
 } from '@adonisjs/lucid/orm'
 import { DateTime } from 'luxon'
-import type { KnowledgePackOwnerType } from '../../types/knowledge_packs.js'
+import type {
+  KnowledgePackFinancialTermsBasis,
+  KnowledgePackOwnerType,
+} from '../../types/knowledge_packs.js'
 
 export default class KnowledgePackFinancialTerm extends BaseModel {
   static table = 'knowledge_pack_financial_terms'
@@ -19,6 +22,10 @@ export default class KnowledgePackFinancialTerm extends BaseModel {
   @column() declare owner_type_snapshot: KnowledgePackOwnerType
   @column() declare creator_id_snapshot: string | null
   @column() declare creator_royalty_rate_bps: number
+  @column() declare terms_basis: KnowledgePackFinancialTermsBasis
+  @column() declare agreement_reference: string | null
+  @column() declare negotiation_reason: string | null
+  @column() declare approved_by_ref: string | null
   @column.dateTime() declare effective_from: DateTime
   @column() declare created_by_ref: string
   @column.dateTime({ autoCreate: true }) declare created_at: DateTime

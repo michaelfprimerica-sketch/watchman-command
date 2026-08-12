@@ -60,6 +60,9 @@ export const KNOWLEDGE_PACK_LEDGER_ENTRY_TYPES = [
 ] as const
 export type KnowledgePackLedgerEntryType = (typeof KNOWLEDGE_PACK_LEDGER_ENTRY_TYPES)[number]
 
+export const KNOWLEDGE_PACK_FINANCIAL_TERMS_BASES = ['CURRENT_PROGRAM', 'NEGOTIATED'] as const
+export type KnowledgePackFinancialTermsBasis = (typeof KNOWLEDGE_PACK_FINANCIAL_TERMS_BASES)[number]
+
 export const AUTHORIZED_WATCHMAN_CREATOR_DEFAULT_ROYALTY_BPS = 8_000
 export const HQ_KNOWLEDGE_PACK_CREATOR_ROYALTY_BPS = 0
 export const FULL_REVENUE_BPS = 10_000
@@ -132,6 +135,10 @@ export type KnowledgePackFinancialTermsInput = {
   creatorId: string | null
   creatorRoyaltyRateBps: number
   effectiveFrom: string
+  termsBasis: KnowledgePackFinancialTermsBasis
+  agreementReference?: string | null
+  negotiationReason?: string | null
+  approvedByRef?: string | null
 }
 
 export type KnowledgePackLedgerAmount = {
