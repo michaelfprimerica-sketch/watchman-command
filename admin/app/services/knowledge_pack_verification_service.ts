@@ -161,7 +161,10 @@ async function verifyArtifactFile(
     verificationError('UNSAFE_ARTIFACT', `Artifact ${artifact.path} is not a regular file`)
   }
 
-  const handle = await open(absolutePath, constants.O_RDONLY | constants.O_NOFOLLOW)
+  const handle = await open(
+    absolutePath,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
+  )
   try {
     const opened = await handle.stat()
     if (

@@ -91,6 +91,10 @@ test('rejects duplicate/escaped duplicate fields, malformed UTF-8, BOM, and over
   assert.throws(() => service.parseSignedManifest(escapedDuplicate), /canonical representation/)
   assert.throws(() => service.parseSignedManifest(Buffer.from([0xc3, 0x28])), /not valid UTF-8/)
   assert.throws(
+    () => service.parseSignedManifest(`{"value":"${String.fromCharCode(0xd800)}"}`),
+    /unpaired Unicode surrogate/
+  )
+  assert.throws(
     () =>
       service.parseSignedManifest(
         Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(serialized)])
@@ -98,6 +102,19 @@ test('rejects duplicate/escaped duplicate fields, malformed UTF-8, BOM, and over
     /must not contain a UTF-8 BOM/
   )
   assert.throws(() => service.parseSignedManifest('x'.repeat(256 * 1024 + 1)), /exceeds/)
+  const oversizedObject = {
+    ...envelope,
+    signed: {
+      ...envelope.signed,
+      sources: Array.from({ length: 20 }, (_, index) => ({
+        id: `source-${index}`,
+        authority: 'Synthetic Authority',
+        title: `Synthetic source ${index}`,
+        provenanceNotes: 'x'.repeat(20_000),
+      })),
+    },
+  }
+  assert.throws(() => service.serializeSignedManifest(oversizedObject), /exceeds/)
 })
 
 test('rejects unknown/unsupported fields, unsafe paths, duplicate paths, and lax versions', async () => {
@@ -107,12 +124,39 @@ test('rejects unknown/unsupported fields, unsafe paths, duplicate paths, and lax
     { ...valid, untrusted: true },
     { ...valid, signed: { ...valid.signed, schemaVersion: 'watchman.knowledge-pack/v2' } },
     { ...valid, signed: { ...valid.signed, packVersion: 'v1.2.0' } },
+    { ...valid, signed: { ...valid.signed, packId: `pack-${'a'.repeat(40)}` } },
     { ...valid, signed: { ...valid.signed, minimumWatchmanVersion: '1.34' } },
     {
       ...valid,
       signed: {
         ...valid.signed,
         owner: { ownerType: 'UNREVIEWED_PUBLISHER', creatorId: 'creator-ada-01' },
+      },
+    },
+    {
+      ...valid,
+      signed: {
+        ...valid.signed,
+        artifacts: [],
+      },
+    },
+    {
+      ...valid,
+      signed: {
+        ...valid.signed,
+        artifacts: [
+          valid.signed.artifacts[0],
+          {
+            ...valid.signed.artifacts[0],
+            id: 'artifact-interposed-sibling',
+            path: `${valid.signed.artifacts[0].path}-sibling`,
+          },
+          {
+            ...valid.signed.artifacts[0],
+            id: 'artifact-prefix-collision',
+            path: `${valid.signed.artifacts[0].path}/nested`,
+          },
+        ],
       },
     },
     {
@@ -210,7 +254,7 @@ test('enforces Ed25519 key purpose and keeps private keys out of the client trus
   )
 })
 
-test('binds persisted signed manifests to the exact immutable catalog snapshot', () => {
+test('binds persisted signed manifests to verification and the immutable catalog snapshot', async () => {
   const value = manifest()
   const catalog = normalizeKnowledgePackManifestSnapshot(value)
   assert.doesNotThrow(() => assertKnowledgePackManifestMatchesCatalog(value, catalog))
@@ -233,4 +277,12 @@ test('binds persisted signed manifests to the exact immutable catalog snapshot',
       ),
     /does not match/
   )
+
+  const serviceSource = await readFile(
+    new URL('../../app/services/knowledge_pack_signed_manifest_service.ts', import.meta.url),
+    'utf8'
+  )
+  assert.match(serviceSource, /verificationService\.verifyManifest/)
+  assert.match(serviceSource, /signedManifest:\s*input\.signedManifest/)
+  assert.doesNotMatch(serviceSource, /verified:\s*VerifiedKnowledgePackManifest/)
 })

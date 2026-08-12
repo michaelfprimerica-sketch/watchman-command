@@ -17,7 +17,7 @@ import {
   knowledgePackServiceAreaKey,
 } from '../utils/knowledge_pack_governance.js'
 import { KnowledgePackManifestService } from './knowledge_pack_manifest_service.js'
-import type { VerifiedKnowledgePackManifest } from './knowledge_pack_verification_service.js'
+import { KnowledgePackVerificationService } from './knowledge_pack_verification_service.js'
 
 export type KnowledgePackCatalogSnapshot = {
   packId: string
@@ -132,7 +132,7 @@ export async function loadKnowledgePackCatalogSnapshot(
           throw new Error('Stored Knowledge Pack artifact size is invalid')
         }
         return {
-          id: row.id,
+          id: row.artifact_id,
           path: row.logical_name,
           contentType: row.content_type,
           sizeBytes,
@@ -145,7 +145,7 @@ export async function loadKnowledgePackCatalogSnapshot(
     releaseNotes: version.release_notes ?? null,
     sources: sources
       .map((row) => ({
-        id: row.id,
+        id: row.source_id,
         authority: row.source_authority,
         title: row.source_title,
         url: row.source_url ?? null,
@@ -167,31 +167,37 @@ export function assertKnowledgePackManifestMatchesCatalog(
 }
 
 /**
- * Immutable persistence boundary for a manifest that already passed asymmetric verification.
+ * Immutable persistence boundary for a manifest that passes asymmetric verification here.
  * This method does not grant publication: callers must separately require governed approval and
  * immutable financial terms before transitioning the version to PUBLISHED.
  */
 export class KnowledgePackSignedManifestService {
-  constructor(private readonly manifestService = new KnowledgePackManifestService()) {}
+  constructor(
+    private readonly verificationService: KnowledgePackVerificationService,
+    private readonly manifestService = new KnowledgePackManifestService()
+  ) {}
 
   async recordVerifiedManifest(input: {
     packVersionId: string
-    verified: VerifiedKnowledgePackManifest
+    signedManifest: string | Uint8Array
+    currentWatchmanVersion: string
   }): Promise<string> {
     assertKnowledgePackIdentifier(input.packVersionId, 'Pack version ID')
-    const canonicalEnvelope = this.manifestService.serializeSignedManifest(
-      input.verified.signedManifest
-    )
+    const verified = await this.verificationService.verifyManifest({
+      signedManifest: input.signedManifest,
+      currentWatchmanVersion: input.currentWatchmanVersion,
+    })
+    const canonicalEnvelope = this.manifestService.serializeSignedManifest(verified.signedManifest)
     const manifestSha256 = this.manifestService.signedManifestSha256(canonicalEnvelope)
-    const signedManifest = unsignedKnowledgePackManifest(input.verified.signedManifest.signed)
-    const metadata = input.verified.signedManifest.signed.signatureMetadata
+    const signedManifest = unsignedKnowledgePackManifest(verified.signedManifest.signed)
+    const metadata = verified.signedManifest.signed.signatureMetadata
     if (
-      manifestSha256 !== input.verified.manifestSha256 ||
-      canonicalEnvelope !== input.verified.canonicalSignedManifest ||
-      metadata.keyId !== input.verified.signingKeyId ||
+      manifestSha256 !== verified.manifestSha256 ||
+      canonicalEnvelope !== verified.canonicalSignedManifest ||
+      metadata.keyId !== verified.signingKeyId ||
       !this.manifestService
         .canonicalManifestBytes(signedManifest)
-        .equals(this.manifestService.canonicalManifestBytes(input.verified.manifest))
+        .equals(this.manifestService.canonicalManifestBytes(verified.manifest))
     ) {
       throw new Error('Verified Knowledge Pack manifest result is inconsistent')
     }

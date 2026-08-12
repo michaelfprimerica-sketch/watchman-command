@@ -134,6 +134,18 @@ function assertUnique(values: readonly string[], label: string): void {
   if (new Set(values).size !== values.length) schemaError(`${label} contains duplicates`)
 }
 
+function assertNoArtifactPrefixCollisions(paths: readonly string[]): void {
+  const normalized = new Set(paths.map((path) => path.toLowerCase()))
+  for (const path of normalized) {
+    const parts = path.split('/')
+    for (let length = 1; length < parts.length; length += 1) {
+      if (normalized.has(parts.slice(0, length).join('/'))) {
+        schemaError('Artifact paths contain a file/directory prefix collision')
+      }
+    }
+  }
+}
+
 function assertRealDate(parts: readonly number[], label: string): void {
   const [year, month, day, hour = 0, minute = 0, second = 0, millisecond = 0] = parts
   const date = new Date(0)
@@ -414,6 +426,7 @@ export function assertKnowledgePackManifestV1(
   } catch {
     schemaError('Pack ID is invalid')
   }
+  if ((value.packId as string).length > 36) schemaError('Pack ID is too long')
   assertStrictSemver(value.packVersion, 'Pack version')
   assertString(value.title, 'Pack title', 255)
   try {
@@ -466,7 +479,11 @@ export function assertKnowledgePackManifestV1(
     schemaError('Knowledge Pack content format is invalid')
   }
 
-  if (!Array.isArray(value.artifacts) || value.artifacts.length > KNOWLEDGE_PACK_MAX_ARTIFACTS) {
+  if (
+    !Array.isArray(value.artifacts) ||
+    value.artifacts.length === 0 ||
+    value.artifacts.length > KNOWLEDGE_PACK_MAX_ARTIFACTS
+  ) {
     schemaError('Artifact list is invalid')
   }
   value.artifacts.forEach(assertArtifact)
@@ -482,6 +499,7 @@ export function assertKnowledgePackManifestV1(
     value.artifacts.map((artifact) => artifact.path.toLowerCase()),
     'Case-insensitive artifact paths'
   )
+  assertNoArtifactPrefixCollisions(value.artifacts.map((artifact) => artifact.path))
   const totalBytes = value.artifacts.reduce((total, artifact) => total + artifact.sizeBytes, 0)
   if (!Number.isSafeInteger(totalBytes) || totalBytes > KNOWLEDGE_PACK_MAX_TOTAL_ARTIFACT_BYTES) {
     schemaError('Aggregate artifact size is invalid')
@@ -574,7 +592,37 @@ function canonicalBytes(value: unknown): Buffer {
   return Buffer.from(serialized, 'utf8')
 }
 
+function assertManifestSize(bytes: Buffer): Buffer {
+  if (bytes.length > KNOWLEDGE_PACK_MANIFEST_MAX_BYTES) {
+    throw new KnowledgePackManifestError(
+      `Manifest exceeds ${KNOWLEDGE_PACK_MANIFEST_MAX_BYTES} bytes`,
+      'MANIFEST_TOO_LARGE'
+    )
+  }
+  return bytes
+}
+
 function decodeManifestBytes(input: string | Uint8Array): { bytes: Buffer; text: string } {
+  if (typeof input === 'string') {
+    for (let index = 0; index < input.length; index += 1) {
+      const code = input.charCodeAt(index)
+      if (code >= 0xd800 && code <= 0xdbff) {
+        const following = input.charCodeAt(index + 1)
+        if (following < 0xdc00 || following > 0xdfff) {
+          throw new KnowledgePackManifestError(
+            'Manifest contains an unpaired Unicode surrogate',
+            'INVALID_ENCODING'
+          )
+        }
+        index += 1
+      } else if (code >= 0xdc00 && code <= 0xdfff) {
+        throw new KnowledgePackManifestError(
+          'Manifest contains an unpaired Unicode surrogate',
+          'INVALID_ENCODING'
+        )
+      }
+    }
+  }
   const bytes = typeof input === 'string' ? Buffer.from(input, 'utf8') : Buffer.from(input)
   if (bytes.length === 0) {
     throw new KnowledgePackManifestError('Manifest is empty', 'INVALID_JSON')
@@ -612,7 +660,7 @@ export class KnowledgePackManifestService {
 
   canonicalSignedManifestBytes(envelope: SignedKnowledgePackManifestV1): Buffer {
     assertSignedKnowledgePackManifest(envelope)
-    return canonicalBytes(envelope)
+    return assertManifestSize(canonicalBytes(envelope))
   }
 
   serializeSignedManifest(envelope: SignedKnowledgePackManifestV1): string {
