@@ -118,6 +118,8 @@ test('registry migration is additive, constrained, and refuses populated-history
   assert.match(source, /knowledge_pack_versions_owner_creator_check/)
   assert.match(source, /knowledge_pack_service_areas_shape_check/)
   assert.match(source, /unique\(\['pack_version_id', 'area_key'\]\)/)
+  assert.match(source, /unique\(\['pack_version_id', 'artifact_id'\]\)/)
+  assert.match(source, /unique\(\['pack_version_id', 'source_id'\]\)/)
   assert.match(
     source,
     /createTable\('knowledge_pack_artifacts'[\s\S]*is_active'[\s\S]*defaultTo\(false\)/

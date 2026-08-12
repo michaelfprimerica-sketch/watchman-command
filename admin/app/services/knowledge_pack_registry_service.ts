@@ -272,8 +272,9 @@ export class KnowledgePackRegistryService {
       if (sources.length) {
         await trx.table('knowledge_pack_sources').multiInsert(
           sources.map((source) => ({
-            id: source.id,
+            id: randomUUID(),
             pack_version_id: versionId,
+            source_id: source.id,
             source_authority: source.authority.trim(),
             source_title: source.title.trim(),
             source_url: source.url ?? null,
@@ -287,8 +288,9 @@ export class KnowledgePackRegistryService {
       if (artifacts.length) {
         await trx.table('knowledge_pack_artifacts').multiInsert(
           artifacts.map((artifact) => ({
-            id: artifact.id,
+            id: randomUUID(),
             pack_version_id: versionId,
+            artifact_id: artifact.id,
             logical_name: artifact.path,
             content_type: artifact.contentType,
             byte_size: artifact.sizeBytes,

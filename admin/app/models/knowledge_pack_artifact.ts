@@ -13,6 +13,7 @@ export default class KnowledgePackArtifact extends BaseModel {
 
   @column({ isPrimary: true }) declare id: string
   @column() declare pack_version_id: string
+  @column() declare artifact_id: string
   @column() declare logical_name: string
   @column() declare content_type: string
   @column() declare byte_size: string

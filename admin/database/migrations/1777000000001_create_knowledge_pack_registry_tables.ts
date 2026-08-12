@@ -124,6 +124,7 @@ export default class extends BaseSchema {
     this.schema.createTable('knowledge_pack_sources', (table) => {
       table.string('id', 36).primary()
       table.string('pack_version_id', 36).notNullable().index()
+      table.string('source_id', 128).notNullable()
       table.string('source_authority', 255).notNullable()
       table.string('source_title', 512).notNullable()
       table.string('source_url', 2048).nullable()
@@ -131,12 +132,14 @@ export default class extends BaseSchema {
       table.text('provenance_notes').nullable()
       table.text('rights_metadata').nullable()
       table.timestamp('created_at').notNullable()
+      table.unique(['pack_version_id', 'source_id'])
       table.foreign('pack_version_id').references('knowledge_pack_versions.id').onDelete('RESTRICT')
     })
 
     this.schema.createTable('knowledge_pack_artifacts', (table) => {
       table.string('id', 36).primary()
       table.string('pack_version_id', 36).notNullable().index()
+      table.string('artifact_id', 128).notNullable()
       table.string('logical_name', 512).notNullable()
       table.string('content_type', 255).notNullable()
       table.bigInteger('byte_size').unsigned().notNullable()
@@ -146,6 +149,7 @@ export default class extends BaseSchema {
       table.boolean('is_active').notNullable().defaultTo(false)
       table.timestamp('created_at').notNullable()
       table.timestamp('published_at').nullable()
+      table.unique(['pack_version_id', 'artifact_id'])
       table.unique(['pack_version_id', 'logical_name'])
       table.foreign('pack_version_id').references('knowledge_pack_versions.id').onDelete('RESTRICT')
     })
