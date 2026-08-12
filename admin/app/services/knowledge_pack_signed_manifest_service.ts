@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 
-import db from '@adonisjs/lucid/services/db'
 import type { TransactionClientContract } from '@adonisjs/lucid/types/database'
 import { DateTime } from 'luxon'
 
@@ -182,6 +181,8 @@ export class KnowledgePackSignedManifestService {
     signedManifest: string | Uint8Array
     currentWatchmanVersion: string
   }): Promise<string> {
+    const dbModule = await import('@adonisjs/lucid/services/db')
+    const db = dbModule.default
     assertKnowledgePackIdentifier(input.packVersionId, 'Pack version ID')
     const verified = await this.verificationService.verifyManifest({
       signedManifest: input.signedManifest,
