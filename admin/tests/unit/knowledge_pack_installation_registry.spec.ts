@@ -159,6 +159,11 @@ describe('installed Knowledge Pack registry migration contract', () => {
     assert.match(source, /onDelete\('RESTRICT'\)/)
     assert.match(source, /Refusing to roll back populated installed Knowledge Pack history/)
     assert.doesNotMatch(source, /membership|entitlement|software[_ -]?license|customer/i)
+    const registrySource = await readFile(
+      new URL('../../app/services/knowledge_pack_installation_registry.ts', import.meta.url),
+      'utf8'
+    )
+    assert.match(registrySource, /semver\.gt\(currentRelease\.pack_version, release\.packVersion\)/)
     assert.doesNotMatch(source, /references\(['"]knowledge_packs[.'"]/)
   })
 })

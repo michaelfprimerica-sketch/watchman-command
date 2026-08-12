@@ -1,6 +1,7 @@
 import db from '@adonisjs/lucid/services/db'
 import { randomUUID } from 'node:crypto'
 import { DateTime } from 'luxon'
+import semver from 'semver'
 
 import type {
   InstalledKnowledgePackRelease,
@@ -91,6 +92,7 @@ function assertSameVerifiedRelease(
   if (
     row.manifest_sha256 !== input.manifestSha256 ||
     row.signing_key_id !== input.signingKeyId ||
+    row.source !== input.source ||
     row.install_status !== 'INSTALLED' ||
     JSON.stringify(artifactSnapshot(artifacts)) !==
       JSON.stringify(artifactSnapshot(input.artifacts))
@@ -187,6 +189,14 @@ export class LucidKnowledgePackInstallationRegistry implements KnowledgePackInst
         .first()
 
       if (current) {
+        const currentRelease = (await trx
+          .from('installed_knowledge_pack_releases')
+          .where('id', current.current_release_id)
+          .first()) as ReleaseRow | undefined
+        if (!currentRelease) throw new Error('Installed Knowledge Pack pointer is invalid')
+        if (semver.gt(currentRelease.pack_version, release.packVersion)) {
+          throw new Error('Knowledge Pack downgrade is not allowed')
+        }
         await trx.from('installed_knowledge_packs').where('pack_id', input.packId).update({
           current_release_id: release.id,
           updated_at: pointerUpdatedAt,

@@ -46,4 +46,13 @@ the supported deployment architecture, including enforced checks, foreign keys, 
 concurrent publication/install attempts, populated-history rollback refusal, and idempotency. Also
 exercise crash/power-loss durability and directory `fsync`/atomic-rename behavior on every supported
 mounted filesystem and CPU architecture. These tests must never target a customer database or live
-content volume.
+content volume. Controlled-lab work must also exercise abrupt-process stale-lock recovery,
+cross-process install concurrency, FIFO/special-file races, and cleanup/reconciliation after every
+promotion and database-commit crash point. Until that protocol is validated, an abrupt termination
+may require an operator to inspect and clear the dedicated per-pack installer lock; it never permits
+partial promotion or false registry advancement.
+
+Knowledge Pack financial and audit tables are append-only application-owned boundaries. Runtime
+code must post through their services, not issue direct SQL mutations. Disposable MySQL validation
+must specifically confirm negotiated-term checks, typed reversal-target foreign keys, exact-integer
+money constraints, immutable hooks, and populated-history rollback refusal before public rollout.
