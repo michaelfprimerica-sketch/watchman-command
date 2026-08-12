@@ -32,14 +32,17 @@ export default class extends BaseSchema {
       table.string('created_by_ref', 128).notNullable()
       table.timestamp('created_at').notNullable()
       table.unique(['pack_version_id', 'terms_version'])
+      table.unique(['pack_version_id', 'effective_from'])
+      table.unique(['pack_version_id', 'id'], 'knowledge_pack_terms_version_id_unique')
       table.foreign('pack_version_id').references('knowledge_pack_versions.id').onDelete('RESTRICT')
       table
         .foreign('creator_id_snapshot')
         .references('knowledge_pack_creators.id')
         .onDelete('RESTRICT')
       table
-        .foreign('supersedes_terms_id')
-        .references('knowledge_pack_financial_terms.id')
+        .foreign(['pack_version_id', 'supersedes_terms_id'], 'knowledge_pack_terms_supersession_fk')
+        .references(['pack_version_id', 'id'])
+        .inTable('knowledge_pack_financial_terms')
         .onDelete('RESTRICT')
       table.check(
         'creator_royalty_rate_bps >= 0 AND creator_royalty_rate_bps <= 10000',
@@ -63,8 +66,9 @@ export default class extends BaseSchema {
           `AND creator_royalty_rate_bps = 8000))) OR ` +
           `(terms_basis = 'NEGOTIATED' ` +
           `AND owner_type_snapshot = 'AUTHORIZED_WATCHMAN_CREATOR' ` +
-          `AND agreement_reference IS NOT NULL AND negotiation_reason IS NOT NULL ` +
-          `AND approved_by_ref IS NOT NULL)`,
+          `AND CHAR_LENGTH(TRIM(agreement_reference)) > 0 ` +
+          `AND CHAR_LENGTH(TRIM(negotiation_reason)) > 0 ` +
+          `AND CHAR_LENGTH(TRIM(approved_by_ref)) > 0)`,
         {},
         'knowledge_pack_terms_basis_check'
       )

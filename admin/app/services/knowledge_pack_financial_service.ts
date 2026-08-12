@@ -178,7 +178,12 @@ export class KnowledgePackFinancialService {
     }
     if (input.collectedMinor <= 0n) throw new Error('Collected amount must be positive')
 
-    const netRevenueMinor = computeNetKnowledgePackRevenue(input)
+    const netRevenueMinor = computeNetKnowledgePackRevenue({
+      collectedMinor: input.collectedMinor,
+      taxesCollectedMinor: input.taxesCollectedMinor,
+      processingFeesMinor: input.processingFeesMinor,
+      platformTransactionFeesMinor: input.platformTransactionFeesMinor,
+    })
 
     return db.transaction(async (trx) => {
       const occurredAt = DateTime.fromISO(input.occurredAt).toUTC()

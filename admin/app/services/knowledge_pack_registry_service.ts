@@ -22,6 +22,12 @@ import {
   assertSafeKnowledgePackArtifactPath,
   knowledgePackServiceAreaKey,
 } from '../utils/knowledge_pack_governance.js'
+import { KnowledgePackManifestService } from './knowledge_pack_manifest_service.js'
+import {
+  assertKnowledgePackManifestMatchesCatalog,
+  loadKnowledgePackCatalogSnapshot,
+} from './knowledge_pack_signed_manifest_service.js'
+import { unsignedKnowledgePackManifest } from '../../types/knowledge_pack_manifests.js'
 
 const MAX_ASSOCIATIONS = 256
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
@@ -113,6 +119,8 @@ const assertReviewInput = (input: PublishVersionInput) => {
  * Watchman has an authenticated administrative boundary.
  */
 export class KnowledgePackRegistryService {
+  private readonly manifestService = new KnowledgePackManifestService()
+
   async createCreator(input: CreateCreatorInput): Promise<string> {
     assertKnowledgePackIdentifier(input.representativeId, 'Representative ID')
     assertText(input.displayName, 'Creator display name', 255)
@@ -402,13 +410,41 @@ export class KnowledgePackRegistryService {
       if (!signedManifest) {
         throw new Error('Knowledge Pack publication requires a persisted signed manifest')
       }
+      const parsedEnvelope = this.manifestService.parseSignedManifest(
+        signedManifest.canonical_envelope
+      )
+      const persistedManifestHash = this.manifestService.signedManifestSha256(parsedEnvelope)
+      const persistedMetadata = parsedEnvelope.signed.signatureMetadata
+      if (
+        persistedManifestHash !== signedManifest.manifest_sha256 ||
+        persistedMetadata.keyId !== signedManifest.signing_key_id ||
+        persistedMetadata.algorithm !== signedManifest.signature_algorithm ||
+        persistedMetadata.canonicalization !== signedManifest.canonicalization ||
+        persistedMetadata.encoding !== signedManifest.signature_encoding
+      ) {
+        throw new Error('Persisted signed Knowledge Pack manifest metadata is inconsistent')
+      }
+      assertKnowledgePackManifestMatchesCatalog(
+        unsignedKnowledgePackManifest(parsedEnvelope.signed),
+        await loadKnowledgePackCatalogSnapshot(trx, input.packVersionId)
+      )
 
       const financialTerms = await trx
         .from('knowledge_pack_financial_terms')
         .where('pack_version_id', input.packVersionId)
+        .where('effective_from', '<=', nowSql())
+        .orderBy('effective_from', 'desc')
         .first()
       if (!financialTerms) {
-        throw new Error('Knowledge Pack publication requires immutable financial terms')
+        throw new Error('Knowledge Pack publication requires currently effective financial terms')
+      }
+      if (
+        financialTerms.owner_type_snapshot !== version.owner_type_snapshot ||
+        financialTerms.creator_id_snapshot !== version.creator_id_snapshot
+      ) {
+        throw new Error(
+          'Knowledge Pack financial terms do not match the version ownership snapshot'
+        )
       }
 
       const now = nowSql()
