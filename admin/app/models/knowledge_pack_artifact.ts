@@ -1,4 +1,10 @@
-import { BaseModel, column, SnakeCaseNamingStrategy } from '@adonisjs/lucid/orm'
+import {
+  BaseModel,
+  beforeDelete,
+  beforeUpdate,
+  column,
+  SnakeCaseNamingStrategy,
+} from '@adonisjs/lucid/orm'
 import { DateTime } from 'luxon'
 
 export default class KnowledgePackArtifact extends BaseModel {
@@ -16,4 +22,14 @@ export default class KnowledgePackArtifact extends BaseModel {
   @column() declare is_active: boolean
   @column.dateTime({ autoCreate: true }) declare created_at: DateTime
   @column.dateTime() declare published_at: DateTime | null
+
+  @beforeUpdate()
+  static rejectUpdate(): never {
+    throw new Error('Knowledge Pack artifact metadata is immutable')
+  }
+
+  @beforeDelete()
+  static rejectDelete(): never {
+    throw new Error('Knowledge Pack artifact history is immutable')
+  }
 }

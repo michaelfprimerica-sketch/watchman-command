@@ -14,6 +14,7 @@ import {
 import KnowledgePack from '../../app/models/knowledge_pack.js'
 import KnowledgePackCreator from '../../app/models/knowledge_pack_creator.js'
 import KnowledgePackVersion from '../../app/models/knowledge_pack_version.js'
+import KnowledgePackArtifact from '../../app/models/knowledge_pack_artifact.js'
 
 test('enforces the full governed review path and rejects direct publication', () => {
   assert.deepEqual(KNOWLEDGE_PACK_ALLOWED_TRANSITIONS.DRAFT, ['PROPOSED'])
@@ -182,6 +183,9 @@ test('model guards block direct financial identity reassignment', () => {
   version.$isPersisted = true
   version.$hydrateOriginals()
   version.release_notes = 'Safe clarification'
+  assert.throws(() => KnowledgePackVersion.rejectIdentityOrOwnershipUpdate(version), /immutable/i)
+  version.$hydrateOriginals()
+  version.approval_status = 'PROPOSED'
   assert.doesNotThrow(() => KnowledgePackVersion.rejectIdentityOrOwnershipUpdate(version))
   version.version = '2.0.0'
   assert.throws(() => KnowledgePackVersion.rejectIdentityOrOwnershipUpdate(version), /immutable/i)
@@ -194,4 +198,7 @@ test('model guards block direct financial identity reassignment', () => {
   assert.doesNotThrow(() => KnowledgePackCreator.rejectRepresentativeReassignment(creator))
   creator.representative_id = 'different-representative'
   assert.throws(() => KnowledgePackCreator.rejectRepresentativeReassignment(creator), /immutable/i)
+
+  assert.throws(() => KnowledgePackArtifact.rejectUpdate(), /immutable/i)
+  assert.throws(() => KnowledgePackArtifact.rejectDelete(), /immutable/i)
 })
