@@ -117,16 +117,6 @@ export type KnowledgePackManifestV1 = {
   sources: KnowledgePackSourceReference[]
 }
 
-export type KnowledgePackSignatureMetadata = {
-  algorithm: 'Ed25519'
-  keyId: string
-}
-
-export type SignedKnowledgePackManifest = {
-  manifest: KnowledgePackManifestV1
-  signature: KnowledgePackSignatureMetadata & { value: string }
-}
-
 export type KnowledgePackFinancialTermsInput = {
   packId: string
   packVersionId: string
