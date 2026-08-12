@@ -11,6 +11,7 @@ import type {
 import {
   assertCreatorRoyaltyRateBps,
   assertFinancialTerms,
+  assertKnowledgePackReversalTarget,
   assertLedgerEntry,
   calculateKnowledgePackRevenueShares,
   computeNetKnowledgePackRevenue,
@@ -186,7 +187,7 @@ export class KnowledgePackFinancialService {
     })
 
     return db.transaction(async (trx) => {
-      const occurredAt = DateTime.fromISO(input.occurredAt).toUTC()
+      const occurredAt = DateTime.fromISO(input.occurredAt).toUTC().startOf('second')
       const occurredAtSql = occurredAt.toSQL({ includeOffset: false }) as string
       const terms = await trx
         .from('knowledge_pack_financial_terms')
@@ -219,6 +220,7 @@ export class KnowledgePackFinancialService {
             amountMinor,
             currency: input.currency,
             reversesEntryId: null,
+            reversesEntryType: null,
           })
           return {
             id: randomUUID(),
@@ -229,6 +231,7 @@ export class KnowledgePackFinancialService {
             amount_minor: amountMinor.toString(),
             currency: input.currency,
             reverses_entry_id: null,
+            reverses_entry_type: null,
             external_reference: input.externalReference ?? null,
             occurred_at: occurredAtSql,
             created_at: nowSql(),
@@ -253,7 +256,10 @@ export class KnowledgePackFinancialService {
               match.transaction_ref !== row.transaction_ref ||
               match.entry_type !== row.entry_type ||
               BigInt(match.amount_minor) !== BigInt(row.amount_minor) ||
-              match.currency !== row.currency
+              match.currency !== row.currency ||
+              databaseTimestampMillis(match.occurred_at as Date | string) !==
+                occurredAt.toMillis() ||
+              (match.external_reference ?? null) !== row.external_reference
             )
           })
         ) {
@@ -294,6 +300,11 @@ export class KnowledgePackFinancialService {
         .first()
       if (!original) throw new Error('Original ledger entry does not exist')
       if (original.reverses_entry_id) throw new Error('A reversal cannot itself be reversed here')
+      assertKnowledgePackReversalTarget(original.entry_type, input.entryType)
+      const occurredAt = DateTime.fromISO(input.occurredAt).toUTC().startOf('second')
+      if (occurredAt.toMillis() < databaseTimestampMillis(original.occurred_at as Date | string)) {
+        throw new Error('A reversal cannot occur before its original ledger entry')
+      }
 
       const amountMinor = -BigInt(original.amount_minor)
       assertLedgerEntry({
@@ -301,6 +312,7 @@ export class KnowledgePackFinancialService {
         amountMinor,
         currency: original.currency,
         reversesEntryId: input.originalEntryId,
+        reversesEntryType: original.entry_type,
       })
       await trx.table('knowledge_pack_ledger_entries').insert({
         id,
@@ -311,8 +323,9 @@ export class KnowledgePackFinancialService {
         amount_minor: amountMinor.toString(),
         currency: original.currency,
         reverses_entry_id: input.originalEntryId,
+        reverses_entry_type: original.entry_type,
         external_reference: input.externalReference ?? null,
-        occurred_at: DateTime.fromISO(input.occurredAt).toUTC().toSQL({ includeOffset: false }),
+        occurred_at: occurredAt.toSQL({ includeOffset: false }),
         created_at: nowSql(),
       })
     })

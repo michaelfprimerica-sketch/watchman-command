@@ -11,8 +11,10 @@ import {
 import { assertKnowledgePackIdentifier } from './knowledge_pack_governance.js'
 
 const CURRENCY_PATTERN = /^[A-Z]{3}$/
-const MAX_SIGNED_BIGINT = 9_223_372_036_854_775_807n
-const MIN_SIGNED_BIGINT = -9_223_372_036_854_775_808n
+// mysql2 returns BIGINT columns as JavaScript numbers by default. Keeping persisted amounts inside
+// the exact-integer range prevents a database round trip from introducing floating-point loss.
+const MAX_EXACT_LEDGER_INTEGER = BigInt(Number.MAX_SAFE_INTEGER)
+const MIN_EXACT_LEDGER_INTEGER = -MAX_EXACT_LEDGER_INTEGER
 
 const NEGATIVE_ENTRY_TYPES = new Set<KnowledgePackLedgerEntryType>([
   'TAX_DEDUCTION',
@@ -40,7 +42,7 @@ export type NetKnowledgePackRevenueInput = {
 
 const assertNonNegativeMoney = (amount: bigint, label: string) => {
   if (typeof amount !== 'bigint' || amount < 0n) throw new Error(`${label} must be non-negative`)
-  if (amount > MAX_SIGNED_BIGINT) throw new Error(`${label} exceeds the ledger range`)
+  if (amount > MAX_EXACT_LEDGER_INTEGER) throw new Error(`${label} exceeds the ledger range`)
 }
 
 export function currentCreatorRoyaltyRateBps(ownerType: KnowledgePackOwnerType): number {
@@ -133,14 +135,15 @@ export function assertLedgerEntry(input: {
   amountMinor: bigint
   currency: string
   reversesEntryId?: string | null
+  reversesEntryType?: KnowledgePackLedgerEntryType | null
 }): void {
   if (
     typeof input.amountMinor !== 'bigint' ||
     input.amountMinor === 0n ||
-    input.amountMinor < MIN_SIGNED_BIGINT ||
-    input.amountMinor > MAX_SIGNED_BIGINT
+    input.amountMinor < MIN_EXACT_LEDGER_INTEGER ||
+    input.amountMinor > MAX_EXACT_LEDGER_INTEGER
   ) {
-    throw new Error('Ledger amount is outside the signed 64-bit minor-unit range')
+    throw new Error('Ledger amount is outside the exact minor-unit range')
   }
   if (!CURRENCY_PATTERN.test(input.currency)) throw new Error('Ledger currency is invalid')
   if (NEGATIVE_ENTRY_TYPES.has(input.entryType) && input.amountMinor >= 0n) {
@@ -155,5 +158,37 @@ export function assertLedgerEntry(input: {
   }
   if (input.reversesEntryId) {
     assertKnowledgePackIdentifier(input.reversesEntryId, 'Reversed entry ID')
+  }
+  if (isReversal !== Boolean(input.reversesEntryType)) {
+    throw new Error('Reversal entries must record the original entry type')
+  }
+  if (input.reversesEntryType) {
+    if (
+      input.entryType !== 'REFUND' &&
+      input.entryType !== 'CHARGEBACK' &&
+      input.entryType !== 'REVERSAL'
+    ) {
+      throw new Error('Only reversal entries may record an original entry type')
+    }
+    assertKnowledgePackReversalTarget(input.reversesEntryType, input.entryType)
+  }
+}
+
+export function assertKnowledgePackReversalTarget(
+  originalEntryType: KnowledgePackLedgerEntryType,
+  reversalEntryType: 'REFUND' | 'CHARGEBACK' | 'REVERSAL'
+): void {
+  if (
+    (reversalEntryType === 'REFUND' || reversalEntryType === 'CHARGEBACK') &&
+    originalEntryType !== 'GROSS_SALE'
+  ) {
+    throw new Error('Refund and chargeback entries may reverse only a gross sale')
+  }
+  if (
+    originalEntryType === 'REFUND' ||
+    originalEntryType === 'CHARGEBACK' ||
+    originalEntryType === 'REVERSAL'
+  ) {
+    throw new Error('A reversal entry cannot itself be reversed here')
   }
 }

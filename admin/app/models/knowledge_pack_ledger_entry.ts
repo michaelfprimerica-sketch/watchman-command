@@ -20,6 +20,7 @@ export default class KnowledgePackLedgerEntry extends BaseModel {
   @column() declare amount_minor: string
   @column() declare currency: string
   @column() declare reverses_entry_id: string | null
+  @column() declare reverses_entry_type: KnowledgePackLedgerEntryType | null
   @column() declare external_reference: string | null
   @column.dateTime() declare occurred_at: DateTime
   @column.dateTime({ autoCreate: true }) declare created_at: DateTime

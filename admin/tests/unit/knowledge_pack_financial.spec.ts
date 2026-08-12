@@ -4,6 +4,7 @@ import { test } from 'node:test'
 
 import {
   assertFinancialTerms,
+  assertKnowledgePackReversalTarget,
   assertLedgerEntry,
   calculateKnowledgePackRevenueShares,
   computeNetKnowledgePackRevenue,
@@ -44,6 +45,9 @@ test('net pack revenue subtracts only explicit transaction-specific deductions',
   )
   assert.throws(() =>
     computeNetKnowledgePackRevenue({ collectedMinor: 100n, processingFeesMinor: 101n })
+  )
+  assert.throws(() =>
+    computeNetKnowledgePackRevenue({ collectedMinor: BigInt(Number.MAX_SAFE_INTEGER) + 1n })
   )
 })
 
@@ -108,6 +112,7 @@ test('ledger uses integer minor units and append-only reversal entries', () => {
       amountMinor: 10_000n,
       currency: 'USD',
       reversesEntryId: null,
+      reversesEntryType: null,
     })
   )
   assert.doesNotThrow(() =>
@@ -116,6 +121,7 @@ test('ledger uses integer minor units and append-only reversal entries', () => {
       amountMinor: -10_000n,
       currency: 'USD',
       reversesEntryId: 'ledger-original-sale',
+      reversesEntryType: 'GROSS_SALE',
     })
   )
   assert.doesNotThrow(() =>
@@ -124,6 +130,7 @@ test('ledger uses integer minor units and append-only reversal entries', () => {
       amountMinor: -10_000n,
       currency: 'USD',
       reversesEntryId: 'ledger-original-sale',
+      reversesEntryType: 'GROSS_SALE',
     })
   )
   assert.throws(() =>
@@ -132,7 +139,19 @@ test('ledger uses integer minor units and append-only reversal entries', () => {
       amountMinor: 10_000n,
       currency: 'USD',
       reversesEntryId: 'ledger-original-sale',
+      reversesEntryType: 'GROSS_SALE',
     })
+  )
+  assert.doesNotThrow(() => assertKnowledgePackReversalTarget('GROSS_SALE', 'REFUND'))
+  assert.doesNotThrow(() => assertKnowledgePackReversalTarget('GROSS_SALE', 'CHARGEBACK'))
+  assert.doesNotThrow(() => assertKnowledgePackReversalTarget('CREATOR_SHARE', 'REVERSAL'))
+  assert.throws(
+    () => assertKnowledgePackReversalTarget('CREATOR_SHARE', 'REFUND'),
+    /only a gross sale/
+  )
+  assert.throws(
+    () => assertKnowledgePackReversalTarget('REFUND', 'REVERSAL'),
+    /cannot itself be reversed/
   )
   assert.throws(() =>
     assertLedgerEntry({
@@ -140,6 +159,7 @@ test('ledger uses integer minor units and append-only reversal entries', () => {
       amountMinor: -200n,
       currency: 'usd',
       reversesEntryId: null,
+      reversesEntryType: null,
     })
   )
 })
@@ -157,8 +177,15 @@ test('financial migration protects immutable terms and ledger history', async ()
   assert.match(source, /knowledge_pack_terms_owner_check/)
   assert.match(source, /knowledge_pack_terms_basis_check/)
   assert.match(source, /creator_royalty_rate_bps = 8000/)
+  assert.match(source, /agreement_reference IS NOT NULL/)
+  assert.match(source, /negotiation_reason IS NOT NULL/)
+  assert.match(source, /approved_by_ref IS NOT NULL/)
+  assert.match(source, /amount_minor <= 9007199254740991/)
+  assert.match(source, /knowledge_pack_ledger_exact_integer_check/)
   assert.match(source, /amount_minor/)
   assert.match(source, /reverses_entry_id/)
+  assert.match(source, /reverses_entry_type = 'GROSS_SALE'/)
+  assert.match(source, /knowledge_pack_ledger_reversal_target_fk/)
   assert.match(source, /Refusing to roll back populated immutable Knowledge Pack financial history/)
   assert.doesNotMatch(
     source,
@@ -175,5 +202,9 @@ test('transaction posting resolves effective terms and derives shares internally
   assert.match(source, /where\('effective_from', '<=', occurredAtSql\)/)
   assert.match(source, /calculateKnowledgePackRevenueShares/)
   assert.match(source, /computeNetKnowledgePackRevenue/)
+  assert.match(source, /match\.occurred_at/)
+  assert.match(source, /match\.external_reference/)
+  assert.match(source, /assertKnowledgePackReversalTarget/)
+  assert.match(source, /A reversal cannot occur before its original ledger entry/)
   assert.doesNotMatch(source, /async appendEntry/)
 })

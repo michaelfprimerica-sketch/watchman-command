@@ -66,8 +66,11 @@ export default class extends BaseSchema {
           `AND creator_royalty_rate_bps = 8000))) OR ` +
           `(terms_basis = 'NEGOTIATED' ` +
           `AND owner_type_snapshot = 'AUTHORIZED_WATCHMAN_CREATOR' ` +
+          `AND agreement_reference IS NOT NULL ` +
           `AND CHAR_LENGTH(TRIM(agreement_reference)) > 0 ` +
+          `AND negotiation_reason IS NOT NULL ` +
           `AND CHAR_LENGTH(TRIM(negotiation_reason)) > 0 ` +
+          `AND approved_by_ref IS NOT NULL ` +
           `AND CHAR_LENGTH(TRIM(approved_by_ref)) > 0)`,
         {},
         'knowledge_pack_terms_basis_check'
@@ -83,22 +86,39 @@ export default class extends BaseSchema {
       table.bigInteger('amount_minor').notNullable()
       table.string('currency', 3).notNullable()
       table.string('reverses_entry_id', 36).nullable().unique()
+      table.enum('reverses_entry_type', LEDGER_ENTRY_TYPES).nullable()
       table.string('external_reference', 255).nullable()
       table.timestamp('occurred_at').notNullable()
       table.timestamp('created_at').notNullable()
+      table.unique(['id', 'entry_type'], 'knowledge_pack_ledger_id_type_unique')
       table
         .foreign('financial_terms_id')
         .references('knowledge_pack_financial_terms.id')
         .onDelete('RESTRICT')
       table
-        .foreign('reverses_entry_id')
-        .references('knowledge_pack_ledger_entries.id')
+        .foreign(
+          ['reverses_entry_id', 'reverses_entry_type'],
+          'knowledge_pack_ledger_reversal_target_fk'
+        )
+        .references(['id', 'entry_type'])
+        .inTable('knowledge_pack_ledger_entries')
         .onDelete('RESTRICT')
-      table.check('amount_minor <> 0', {}, 'knowledge_pack_ledger_nonzero_check')
+      table.check(
+        'amount_minor <> 0 AND amount_minor >= -9007199254740991 ' +
+          'AND amount_minor <= 9007199254740991',
+        {},
+        'knowledge_pack_ledger_exact_integer_check'
+      )
       table.check(`currency REGEXP '^[A-Z]{3}$'`, {}, 'knowledge_pack_ledger_currency_check')
       table.check(
-        `(entry_type IN ('REFUND', 'CHARGEBACK', 'REVERSAL') AND reverses_entry_id IS NOT NULL) OR ` +
-          `(entry_type NOT IN ('REFUND', 'CHARGEBACK', 'REVERSAL') AND reverses_entry_id IS NULL)`,
+        `(entry_type IN ('REFUND', 'CHARGEBACK') AND reverses_entry_id IS NOT NULL ` +
+          `AND reverses_entry_type IS NOT NULL ` +
+          `AND reverses_entry_type = 'GROSS_SALE') OR ` +
+          `(entry_type = 'REVERSAL' AND reverses_entry_id IS NOT NULL ` +
+          `AND reverses_entry_type IS NOT NULL ` +
+          `AND reverses_entry_type NOT IN ('REFUND', 'CHARGEBACK', 'REVERSAL')) OR ` +
+          `(entry_type NOT IN ('REFUND', 'CHARGEBACK', 'REVERSAL') ` +
+          `AND reverses_entry_id IS NULL AND reverses_entry_type IS NULL)`,
         {},
         'knowledge_pack_ledger_reversal_check'
       )
