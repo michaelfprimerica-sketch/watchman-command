@@ -1,4 +1,4 @@
-import { BaseModel, column, SnakeCaseNamingStrategy } from '@adonisjs/lucid/orm'
+import { BaseModel, beforeUpdate, column, SnakeCaseNamingStrategy } from '@adonisjs/lucid/orm'
 import { DateTime } from 'luxon'
 import type {
   KnowledgePackApprovalStatus,
@@ -24,4 +24,13 @@ export default class KnowledgePack extends BaseModel {
   @column.dateTime() declare published_at: DateTime | null
   @column.dateTime({ autoCreate: true }) declare created_at: DateTime
   @column.dateTime({ autoCreate: true, autoUpdate: true }) declare updated_at: DateTime
+
+  @beforeUpdate()
+  static rejectDirectOwnershipUpdate(pack: KnowledgePack): void {
+    if (pack.isDirty(['owner_type', 'creator_id'])) {
+      throw new Error(
+        'Knowledge Pack financial ownership requires an audited administrative correction'
+      )
+    }
+  }
 }

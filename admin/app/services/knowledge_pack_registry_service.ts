@@ -1,4 +1,5 @@
 import db from '@adonisjs/lucid/services/db'
+import type { TransactionClientContract } from '@adonisjs/lucid/types/database'
 import { randomUUID } from 'node:crypto'
 import { DateTime } from 'luxon'
 
@@ -15,6 +16,7 @@ import {
   assertKnowledgePackCategory,
   assertKnowledgePackIdentifier,
   assertKnowledgePackOwnership,
+  assertPublicationAllowed,
   assertKnowledgePackSlug,
   assertKnowledgePackVersion,
   assertSafeKnowledgePackArtifactPath,
@@ -59,6 +61,8 @@ type TransitionInput = {
   notes?: string | null
 }
 
+type PublishVersionInput = Omit<TransitionInput, 'to'>
+
 const nowSql = () => DateTime.utc().toSQL({ includeOffset: false }) as string
 
 const assertText = (value: string, label: string, maxLength: number) => {
@@ -93,6 +97,13 @@ const assertArtifact = (
   }
   if (!SHA256_PATTERN.test(artifact.sha256)) throw new Error('Artifact SHA-256 is invalid')
   assertText(artifact.storageReference, 'Artifact storage reference', 1024)
+}
+
+const assertReviewInput = (input: PublishVersionInput) => {
+  assertKnowledgePackIdentifier(input.packId, 'Pack ID')
+  assertKnowledgePackIdentifier(input.packVersionId, 'Pack version ID')
+  assertKnowledgePackIdentifier(input.reviewerRef, 'Reviewer reference')
+  if (input.notes && input.notes.length > 20_000) throw new Error('Review notes are too long')
 }
 
 /**
@@ -276,7 +287,7 @@ export class KnowledgePackRegistryService {
             sha256: artifact.sha256,
             compression: artifact.compression ?? null,
             storage_reference: artifact.storageReference,
-            is_active: true,
+            is_active: false,
             created_at: now,
             published_at: null,
           }))
@@ -287,12 +298,20 @@ export class KnowledgePackRegistryService {
   }
 
   async transitionVersion(input: TransitionInput): Promise<void> {
-    assertKnowledgePackIdentifier(input.packId, 'Pack ID')
-    assertKnowledgePackIdentifier(input.packVersionId, 'Pack version ID')
-    assertKnowledgePackIdentifier(input.reviewerRef, 'Reviewer reference')
-    if (input.notes && input.notes.length > 20_000) throw new Error('Review notes are too long')
+    if (input.to === 'PUBLISHED') {
+      return this.publishVersion({
+        packId: input.packId,
+        packVersionId: input.packVersionId,
+        reviewerRef: input.reviewerRef,
+        notes: input.notes,
+      })
+    }
+    assertReviewInput(input)
 
     await db.transaction(async (trx) => {
+      const pack = await trx.from('knowledge_packs').where('id', input.packId).forUpdate().first()
+      if (!pack) throw new Error('Knowledge Pack does not exist')
+
       const version = await trx
         .from('knowledge_pack_versions')
         .where('id', input.packVersionId)
@@ -304,14 +323,14 @@ export class KnowledgePackRegistryService {
       const from = version.approval_status as KnowledgePackApprovalStatus
       const decision = assertKnowledgePackApprovalTransition(from, input.to)
       const now = nowSql()
-      const publishing = input.to === 'PUBLISHED'
+      const clearingAvailability = input.to === 'SUSPENDED' || input.to === 'RETIRED'
       await trx
         .from('knowledge_pack_versions')
         .where('id', input.packVersionId)
         .update({
           approval_status: input.to,
-          is_published: publishing ? true : version.is_published,
-          published_at: publishing ? now : version.published_at,
+          is_published: clearingAvailability ? false : version.is_published,
+          published_at: version.published_at,
           updated_at: now,
         })
       await trx.table('knowledge_pack_approvals').insert({
@@ -326,19 +345,138 @@ export class KnowledgePackRegistryService {
         created_at: now,
       })
 
-      if (publishing) {
-        await trx.from('knowledge_packs').where('id', input.packId).update({
-          approval_status: 'PUBLISHED',
-          is_published: true,
-          published_at: now,
-          updated_at: now,
-        })
+      if (clearingAvailability) {
         await trx
           .from('knowledge_pack_artifacts')
           .where('pack_version_id', input.packVersionId)
-          .update({ published_at: now })
+          .update({ is_active: false })
       }
+
+      await this.recomputePackAvailability({
+        trx,
+        packId: input.packId,
+        fallbackStatus: input.to,
+        firstPublishedAt: pack.published_at,
+        now,
+      })
     })
+  }
+
+  /**
+   * Dedicated publication gate. Initial publication requires APPROVED; a previously published,
+   * suspended version may be republished without replacing its historical publication timestamps.
+   */
+  async publishVersion(input: PublishVersionInput): Promise<void> {
+    assertReviewInput(input)
+
+    await db.transaction(async (trx) => {
+      const pack = await trx.from('knowledge_packs').where('id', input.packId).forUpdate().first()
+      if (!pack) throw new Error('Knowledge Pack does not exist')
+
+      const version = await trx
+        .from('knowledge_pack_versions')
+        .where('id', input.packVersionId)
+        .where('pack_id', input.packId)
+        .forUpdate()
+        .first()
+      if (!version) throw new Error('Knowledge Pack version does not exist')
+
+      const from = version.approval_status as KnowledgePackApprovalStatus
+      if (from === 'APPROVED') {
+        assertPublicationAllowed(from)
+      } else if (from !== 'SUSPENDED' || !version.published_at) {
+        throw new Error('Only an approved or previously published suspended version may publish')
+      }
+      const decision = assertKnowledgePackApprovalTransition(from, 'PUBLISHED')
+
+      const artifact = await trx
+        .from('knowledge_pack_artifacts')
+        .where('pack_version_id', input.packVersionId)
+        .first()
+      if (!artifact) throw new Error('Knowledge Pack publication requires at least one artifact')
+
+      const signedManifest = await trx
+        .from('knowledge_pack_signed_manifests')
+        .where('pack_version_id', input.packVersionId)
+        .first()
+      if (!signedManifest) {
+        throw new Error('Knowledge Pack publication requires a persisted signed manifest')
+      }
+
+      const financialTerms = await trx
+        .from('knowledge_pack_financial_terms')
+        .where('pack_version_id', input.packVersionId)
+        .first()
+      if (!financialTerms) {
+        throw new Error('Knowledge Pack publication requires immutable financial terms')
+      }
+
+      const now = nowSql()
+      const firstVersionPublishedAt = version.published_at ?? now
+      await trx.from('knowledge_pack_versions').where('id', input.packVersionId).update({
+        approval_status: 'PUBLISHED',
+        is_published: true,
+        published_at: firstVersionPublishedAt,
+        updated_at: now,
+      })
+      await trx.table('knowledge_pack_approvals').insert({
+        id: randomUUID(),
+        pack_version_id: input.packVersionId,
+        reviewer_ref: input.reviewerRef,
+        stage: 'PUBLISHED',
+        decision,
+        from_status: from,
+        resulting_status: 'PUBLISHED',
+        notes: input.notes?.trim() || null,
+        created_at: now,
+      })
+
+      // Only the first publication sets immutable publication timestamps. A
+      // suspension toggles availability, and republishing reactivates without
+      // rewriting history.
+      await trx
+        .from('knowledge_pack_artifacts')
+        .where('pack_version_id', input.packVersionId)
+        .whereNull('published_at')
+        .update({ published_at: firstVersionPublishedAt })
+      await trx
+        .from('knowledge_pack_artifacts')
+        .where('pack_version_id', input.packVersionId)
+        .update({ is_active: true })
+
+      await this.recomputePackAvailability({
+        trx,
+        packId: input.packId,
+        fallbackStatus: 'PUBLISHED',
+        firstPublishedAt: pack.published_at ?? firstVersionPublishedAt,
+        now,
+      })
+    })
+  }
+
+  private async recomputePackAvailability(input: {
+    trx: TransactionClientContract
+    packId: string
+    fallbackStatus: KnowledgePackApprovalStatus
+    firstPublishedAt: Date | string | null
+    now: string
+  }): Promise<void> {
+    const availableVersion = await input.trx
+      .from('knowledge_pack_versions')
+      .where('pack_id', input.packId)
+      .where('approval_status', 'PUBLISHED')
+      .where('is_published', true)
+      .first()
+
+    await input.trx
+      .from('knowledge_packs')
+      .where('id', input.packId)
+      .update({
+        approval_status: availableVersion ? 'PUBLISHED' : input.fallbackStatus,
+        is_published: Boolean(availableVersion),
+        published_at: input.firstPublishedAt ?? availableVersion?.published_at ?? null,
+        updated_at: input.now,
+      })
   }
 
   /**

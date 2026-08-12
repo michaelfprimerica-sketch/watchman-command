@@ -143,7 +143,7 @@ export default class extends BaseSchema {
       table.string('sha256', 64).notNullable()
       table.string('compression', 64).nullable()
       table.string('storage_reference', 1024).notNullable()
-      table.boolean('is_active').notNullable().defaultTo(true)
+      table.boolean('is_active').notNullable().defaultTo(false)
       table.timestamp('created_at').notNullable()
       table.timestamp('published_at').nullable()
       table.unique(['pack_version_id', 'logical_name'])
@@ -213,7 +213,13 @@ export default class extends BaseSchema {
       for (const tableName of [
         'knowledge_pack_ownership_corrections',
         'knowledge_pack_approvals',
+        'knowledge_pack_artifacts',
+        'knowledge_pack_sources',
+        'knowledge_pack_service_areas',
+        'knowledge_pack_version_missions',
         'knowledge_pack_versions',
+        'knowledge_packs',
+        'knowledge_pack_creators',
       ]) {
         const row = await db.from(tableName).count('* as total').first()
         if (Number(row?.total ?? 0) > 0) {

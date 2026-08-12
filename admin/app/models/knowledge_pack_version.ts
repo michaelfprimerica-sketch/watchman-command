@@ -1,4 +1,4 @@
-import { BaseModel, column, SnakeCaseNamingStrategy } from '@adonisjs/lucid/orm'
+import { BaseModel, beforeUpdate, column, SnakeCaseNamingStrategy } from '@adonisjs/lucid/orm'
 import { DateTime } from 'luxon'
 import type {
   KnowledgePackApprovalStatus,
@@ -26,4 +26,11 @@ export default class KnowledgePackVersion extends BaseModel {
   @column.dateTime() declare published_at: DateTime | null
   @column.dateTime({ autoCreate: true }) declare created_at: DateTime
   @column.dateTime({ autoCreate: true, autoUpdate: true }) declare updated_at: DateTime
+
+  @beforeUpdate()
+  static rejectIdentityOrOwnershipUpdate(version: KnowledgePackVersion): void {
+    if (version.isDirty(['pack_id', 'version', 'owner_type_snapshot', 'creator_id_snapshot'])) {
+      throw new Error('Knowledge Pack version identity and ownership snapshots are immutable')
+    }
+  }
 }
