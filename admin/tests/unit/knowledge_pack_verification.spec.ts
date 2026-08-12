@@ -180,7 +180,11 @@ test('rejects modified, truncated, missing, unexpected, and symbolic-link artifa
     modified[0] ^= 0xff
     await writeFile(join(root, 'data', 'reference.txt'), modified)
     await assert.rejects(
-      verifier.verify({ signedManifest: serialized, artifactRoot: root }),
+      verifier.verify({
+        signedManifest: serialized,
+        artifactRoot: root,
+        currentWatchmanVersion: '1.34.0',
+      }),
       (error: KnowledgePackVerificationError) => error.code === 'ARTIFACT_HASH_MISMATCH'
     )
   }
@@ -190,7 +194,11 @@ test('rejects modified, truncated, missing, unexpected, and symbolic-link artifa
     })
     const { root, serialized, verifier } = await fixture({ manifest: incorrectHashManifest })
     await assert.rejects(
-      verifier.verify({ signedManifest: serialized, artifactRoot: root }),
+      verifier.verify({
+        signedManifest: serialized,
+        artifactRoot: root,
+        currentWatchmanVersion: '1.34.0',
+      }),
       (error: KnowledgePackVerificationError) => error.code === 'ARTIFACT_HASH_MISMATCH'
     )
   }
@@ -198,7 +206,11 @@ test('rejects modified, truncated, missing, unexpected, and symbolic-link artifa
     const { root, serialized, verifier } = await fixture()
     await writeFile(join(root, 'data', 'reference.txt'), bytes.subarray(0, 4))
     await assert.rejects(
-      verifier.verify({ signedManifest: serialized, artifactRoot: root }),
+      verifier.verify({
+        signedManifest: serialized,
+        artifactRoot: root,
+        currentWatchmanVersion: '1.34.0',
+      }),
       (error: KnowledgePackVerificationError) => error.code === 'ARTIFACT_SIZE_MISMATCH'
     )
   }
@@ -206,7 +218,11 @@ test('rejects modified, truncated, missing, unexpected, and symbolic-link artifa
     const { root, serialized, verifier } = await fixture()
     await rm(join(root, 'data', 'reference.txt'))
     await assert.rejects(
-      verifier.verify({ signedManifest: serialized, artifactRoot: root }),
+      verifier.verify({
+        signedManifest: serialized,
+        artifactRoot: root,
+        currentWatchmanVersion: '1.34.0',
+      }),
       (error: KnowledgePackVerificationError) => error.code === 'MISSING_ARTIFACT'
     )
   }
@@ -214,7 +230,11 @@ test('rejects modified, truncated, missing, unexpected, and symbolic-link artifa
     const { root, serialized, verifier } = await fixture()
     await writeFile(join(root, 'unexpected.bin'), 'unexpected')
     await assert.rejects(
-      verifier.verify({ signedManifest: serialized, artifactRoot: root }),
+      verifier.verify({
+        signedManifest: serialized,
+        artifactRoot: root,
+        currentWatchmanVersion: '1.34.0',
+      }),
       (error: KnowledgePackVerificationError) => error.code === 'UNEXPECTED_ARTIFACT'
     )
   }
@@ -225,13 +245,17 @@ test('rejects modified, truncated, missing, unexpected, and symbolic-link artifa
     await rm(join(root, 'data', 'reference.txt'))
     await symlink(outside, join(root, 'data', 'reference.txt'))
     await assert.rejects(
-      verifier.verify({ signedManifest: serialized, artifactRoot: root }),
+      verifier.verify({
+        signedManifest: serialized,
+        artifactRoot: root,
+        currentWatchmanVersion: '1.34.0',
+      }),
       (error: KnowledgePackVerificationError) => error.code === 'UNSAFE_ARTIFACT'
     )
   }
 })
 
-test('rejects incompatible known versions and preserves indeterminate offline/dev compatibility', async () => {
+test('rejects incompatible, unknown, and development Watchman versions', async () => {
   const { root, serialized, verifier } = await fixture()
   await assert.rejects(
     verifier.verify({
@@ -241,10 +265,14 @@ test('rejects incompatible known versions and preserves indeterminate offline/de
     }),
     (error: KnowledgePackVerificationError) => error.code === 'INCOMPATIBLE_WATCHMAN_VERSION'
   )
-  const indeterminate = await verifier.verify({
-    signedManifest: serialized,
-    artifactRoot: root,
-    currentWatchmanVersion: 'dev',
-  })
-  assert.equal(indeterminate.compatibility, 'INDETERMINATE')
+  for (const currentWatchmanVersion of ['dev', '0.0', undefined]) {
+    await assert.rejects(
+      verifier.verify({
+        signedManifest: serialized,
+        artifactRoot: root,
+        currentWatchmanVersion,
+      }),
+      (error: KnowledgePackVerificationError) => error.code === 'INCOMPATIBLE_WATCHMAN_VERSION'
+    )
+  }
 })

@@ -252,18 +252,20 @@ export class KnowledgePackVerificationService {
     if (!validSignature)
       verificationError('INVALID_SIGNATURE', 'Knowledge Pack signature is invalid')
 
-    let compatibility: KnowledgePackCompatibility = 'INDETERMINATE'
     if (
-      input.currentWatchmanVersion &&
-      semver.valid(input.currentWatchmanVersion) === input.currentWatchmanVersion
+      !input.currentWatchmanVersion ||
+      semver.valid(input.currentWatchmanVersion) !== input.currentWatchmanVersion
     ) {
-      if (semver.lt(input.currentWatchmanVersion, signedManifest.signed.minimumWatchmanVersion)) {
-        verificationError(
-          'INCOMPATIBLE_WATCHMAN_VERSION',
-          `Knowledge Pack requires Watchman ${signedManifest.signed.minimumWatchmanVersion} or newer`
-        )
-      }
-      compatibility = 'COMPATIBLE'
+      verificationError(
+        'INCOMPATIBLE_WATCHMAN_VERSION',
+        'Current Watchman version is unknown; Knowledge Pack compatibility cannot be verified'
+      )
+    }
+    if (semver.lt(input.currentWatchmanVersion, signedManifest.signed.minimumWatchmanVersion)) {
+      verificationError(
+        'INCOMPATIBLE_WATCHMAN_VERSION',
+        `Knowledge Pack requires Watchman ${signedManifest.signed.minimumWatchmanVersion} or newer`
+      )
     }
 
     const canonicalBytes = this.manifestService.canonicalSignedManifestBytes(signedManifest)
@@ -273,7 +275,7 @@ export class KnowledgePackVerificationService {
       canonicalSignedManifest: canonicalBytes.toString('utf8'),
       manifestSha256: createHash('sha256').update(canonicalBytes).digest('hex'),
       signingKeyId: keyId,
-      compatibility,
+      compatibility: 'COMPATIBLE',
     }
   }
 
